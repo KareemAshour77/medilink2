@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Flutter: Run on iPhone 14 Pro",
+      "type": "shell",
+      "command": "flutter run -d 'iPhone 14 Pro'",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Flutter: Get Packages",
+      "type": "shell",
+      "command": "flutter pub get",
+      "group": "build",
+      "presentation": {
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Flutter: Clean + Get",
+      "type": "shell",
+      "command": "flutter clean && flutter pub get",
+      "group": "build"
+    },
+    {
+      "label": "Flutter: Hot Restart",
+      "type": "shell",
+      "command": "echo 'Use R in the debug console, or press Cmd+Shift+P → Flutter: Hot Restart'",
+      "group": "test"
+    }
+  ]
+}
