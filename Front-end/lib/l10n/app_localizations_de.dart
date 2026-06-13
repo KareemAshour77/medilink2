@@ -375,6 +375,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get nearBy => 'In der Nähe';
 
   @override
+  String get refreshLocation => 'Standort aktualisieren';
+
+  @override
+  String get clinicLocation => 'Standort der Klinik';
+
+  @override
   String get myProfile => 'Mein Profil';
 
   @override

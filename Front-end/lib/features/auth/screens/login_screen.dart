@@ -2,14 +2,18 @@
 //test
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../core/services/api_service.dart';
-import '../../patient/screens/home_screen.dart';
 import 'signup_screen.dart';
+import 'email_verification_screen.dart';
+import 'role_chooser_screen.dart';
 import 'forgot_password_screen.dart';
 import '../model/user_model.dart';
 import 'package:medilink/core/services/session_service.dart';
 import 'package:medilink/core/services/in_app_notification_store.dart';
+import 'package:medilink/core/services/chat_service.dart';
+import 'package:medilink/core/services/fcm_service.dart';
 import 'package:medilink/core/router.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 // Google Sign-In
@@ -58,7 +62,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
 
-    if (result['access_token'] != null) {
+    if (result['accounts'] is List &&
+        (result['accounts'] as List).isNotEmpty) {
+      // This email has several role-accounts → let the user choose.
+      final accounts = (result['accounts'] as List)
+          .map((a) => (a as Map).cast<String, dynamic>())
+          .toList();
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => RoleChooserScreen(accounts: accounts),
+        ),
+      );
+    } else if (result['access_token'] != null) {
       final token = result['access_token'];
       final decoded = JwtDecoder.decode(token);
       final responseUser = result['user'] as Map<String, dynamic>?;
@@ -71,6 +87,8 @@ class _LoginScreenState extends State<LoginScreen> {
         'image': responseUser?['image'],
         'latitude': responseUser?['latitude'],
         'longitude': responseUser?['longitude'],
+        'medilink_id': responseUser?['medilink_id'],
+        'verification_status': responseUser?['verification_status'],
         'access_token': token,
       });
 
@@ -79,6 +97,8 @@ class _LoginScreenState extends State<LoginScreen> {
       await SessionService.clear();
       await SessionService.save(user);
       await InAppNotificationStore.instance.loadFromServer();
+      ChatService.instance.connect().catchError((_) {});
+      FcmService.instance.uploadToken().catchError((_) {});
 
       if (!mounted) return;
 
@@ -87,13 +107,31 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(builder: (_) => const RoleRouter()),
         (_) => false,
       );
-    } else if (result['error'] != null) {
-      // ❌ Connection error
-      setState(() => _emailError = result['error']);
+    } else if (result['statusCode'] == 403) {
+      // ⚠️ Account exists but email not verified → send a fresh code and open
+      // the verification screen so the user can finish verifying.
+      final email = _emailCtrl.text.trim();
+      final role = (result['role'] ?? 'patient').toString();
+      await ApiService.sendVerificationCode(email: email, role: role);
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Please verify your email. We sent a new code to $email.',
+        backgroundColor: AppColors.primary,
+      );
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmailVerificationScreen(email: email, role: role),
+        ),
+      );
     } else if (result['statusCode'] == 401 ||
         result['message'] == 'Invalid email or password') {
       // ❌ Wrong credentials
       setState(() => _emailError = 'Invalid email or password');
+    } else if (result['error'] != null && result['statusCode'] == null) {
+      // ❌ Connection error (ApiService returns {'error': ...} with no status).
+      setState(() => _emailError = result['error']);
     } else {
       // ❌ Any other server error
       setState(() => _emailError = result['message'] ?? 'Login failed');
@@ -154,12 +192,25 @@ class _LoginScreenState extends State<LoginScreen> {
         await SessionService.clear();
         await SessionService.save(result.user);
         await InAppNotificationStore.instance.loadFromServer();
+        ChatService.instance.connect().catchError((_) {});
+        FcmService.instance.uploadToken().catchError((_) {});
 
         if (!mounted) return;
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (_) => const RoleRouter()),
           (_) => false,
+        );
+        return;
+      }
+
+      // ── Email has several role-accounts → choose one ─────────────────────
+      if (result is GoogleMultipleAccounts) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => RoleChooserScreen(accounts: result.accounts),
+          ),
         );
         return;
       }
@@ -179,13 +230,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Google sign-in failed: ${e.toString()}'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
+      AppSnackBar.show(context, 'Google sign-in failed: ${e.toString()}');
     } finally {
       if (mounted) setState(() => _googleLoading = false);
     }
@@ -279,32 +324,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             color: Colors.white, strokeWidth: 2.5),
                       )
                     : Text(l.login),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: TextButton(
-                onPressed: () => Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HomeScreen()),
-                  (_) => false,
-                ),
-                style: TextButton.styleFrom(
-                  side: BorderSide(color: AppColors.primary.withOpacity(0.4)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: Text(
-                  'Continue as Guest',
-                  style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
               ),
             ),
             const SizedBox(height: 24),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -30,18 +31,27 @@ class LocationService {
       return null;
     }
 
+    // Fast path: a previous OS-level fix returns instantly (no GPS wait).
+    try {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) _cached = last;
+    } catch (_) {}
+
+    // Try for a fresh fix, but don't block forever. On timeout, keep whatever
+    // last-known position we already have (may be null).
     try {
       _cached = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 10),
+          accuracy: LocationAccuracy.low,
+          timeLimit: Duration(seconds: 8),
         ),
       );
-      return _cached;
+    } on TimeoutException {
+      debugPrint('LocationService: fresh fix timed out — using last known');
     } catch (e) {
       debugPrint('LocationService.getLocation error: $e');
-      return null;
     }
+    return _cached;
   }
 
   static void clearCache() => _cached = null;

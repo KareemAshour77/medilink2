@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
 import 'labs_dashboard.dart';
+import 'labs_profile.dart';
 // import 'labs_bookings.dart';
 // import 'labs_tests.dart';
 // import 'labs_upload.dart';
-// import 'labs_profile.dart';
 
 class LabsHome extends StatefulWidget {
   const LabsHome({super.key});
@@ -14,12 +14,14 @@ class LabsHome extends StatefulWidget {
 
 class _LabsHomeState extends State<LabsHome> {
   int _index = 0;
+  // Bookings / Tests / Upload aren't built yet — placeholders keep the nav from
+  // crashing; Profile is the working account menu.
   final _tabs = const [
     LabsDashboard(),
-   // LabsBookings(),
-  //LabsTests(),
-  //LabsUpload(),
-  //LabsProfile(),
+    _ComingSoon('Bookings'),
+    _ComingSoon('Tests'),
+    _ComingSoon('Upload'),
+    LabsProfile(),
   ];
 
   @override
@@ -57,6 +59,28 @@ class _LabsHomeState extends State<LabsHome> {
             label: 'Profile',
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ComingSoon extends StatelessWidget {
+  final String title;
+  const _ComingSoon(this.title);
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.construction_rounded, size: 48, color: AppColors.grey),
+            const SizedBox(height: 12),
+            Text('$title — coming soon',
+                style: const TextStyle(color: AppColors.grey, fontSize: 15)),
+          ],
+        ),
       ),
     );
   }

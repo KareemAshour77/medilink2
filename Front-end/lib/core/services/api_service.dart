@@ -10,9 +10,9 @@ import '../models/in_app_notification.dart';
 class ApiService {
   // Android emulator → use 10.0.2.2
   // Real phone → use your PC's IP (run ipconfig in CMD)
-  // static const String baseUrl = 'http://172.20.10.5:5000';
-  static const String baseUrl = 'http://192.168.1.105:5000';
-  // static const String baseUrl = 'http://192.168.1.20:5000';
+  // static const String baseUrl = 'http://192.168.1.16:5000';
+  // static const String baseUrl = 'http://192.168.1.109:5000';
+  static const String baseUrl = 'http://172.20.10.5:5000';
 
   static Future<Map<String, dynamic>> updateProfile({
     required String name,
@@ -54,7 +54,7 @@ class ApiService {
   // ── Sign Up ───────────────────────────────────────────
   static Future<Map<String, dynamic>> signUp({
     required String email,
-    required String password,
+    String? password,
     required String role,
     String? name,
     File? image,
@@ -67,7 +67,10 @@ class ApiService {
       );
 
       request.fields['email'] = email;
-      request.fields['password'] = password;
+      // Omitted when the email already exists (backend reuses shared password).
+      if (password != null && password.isNotEmpty) {
+        request.fields['password'] = password;
+      }
       request.fields['role'] = role;
       if (name != null && name.isNotEmpty) request.fields['name'] = name;
       if (specialty != null && specialty.isNotEmpty) {
@@ -82,6 +85,115 @@ class ApiService {
 
       final streamed =
           await request.send().timeout(const Duration(seconds: 15));
+      final body = await streamed.stream.bytesToString();
+      return jsonDecode(body);
+    } catch (e) {
+      return {'error': 'Cannot connect to server'};
+    }
+  }
+
+  // ── Register Patient (multi-step signup) ──────────────
+  // Multipart so the optional profile photo can be uploaded. Backend stores the
+  // row (email_verified=false) and emails an OTP, same as the legacy /auth/signup.
+  static Future<Map<String, dynamic>> registerPatient({
+    required String fullName,
+    required String gender,
+    required String nationalId,
+    required String email,
+    String? password,
+    File? profileImage,
+  }) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/auth/register/patient'),
+      );
+      request.fields['full_name'] = fullName;
+      request.fields['gender'] = gender;
+      request.fields['national_id'] = nationalId;
+      request.fields['email'] = email;
+      // Omitted when the email already exists (backend reuses shared password).
+      if (password != null && password.isNotEmpty) {
+        request.fields['password'] = password;
+      }
+      if (profileImage != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath('profile_image', profileImage.path),
+        );
+      }
+
+      final streamed =
+          await request.send().timeout(const Duration(seconds: 20));
+      final body = await streamed.stream.bytesToString();
+      return jsonDecode(body);
+    } catch (e) {
+      return {'error': 'Cannot connect to server'};
+    }
+  }
+
+  // ── Register Doctor (multi-step signup) ───────────────
+  // Uploads profile photo (optional) + National ID image + Syndicate card
+  // (required) alongside the professional fields.
+  static Future<Map<String, dynamic>> registerDoctor({
+    required String fullName,
+    required String gender,
+    required String nationalId,
+    required String email,
+    String? password,
+    required String specialty,
+    required String syndicateNumber,
+    required int yearsOfExperience,
+    String? clinicName,
+    double? consultationFee,
+    required bool onlineConsultation,
+    File? profileImage,
+    File? nationalIdImage,
+    File? syndicateCardImage,
+  }) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/auth/register/doctor'),
+      );
+      request.fields['full_name'] = fullName;
+      request.fields['gender'] = gender;
+      request.fields['national_id'] = nationalId;
+      request.fields['email'] = email;
+      // Omitted when the email already exists (backend reuses shared password).
+      if (password != null && password.isNotEmpty) {
+        request.fields['password'] = password;
+      }
+      request.fields['specialty'] = specialty;
+      request.fields['syndicate_number'] = syndicateNumber;
+      request.fields['years_of_experience'] = yearsOfExperience.toString();
+      if (clinicName != null && clinicName.isNotEmpty) {
+        request.fields['clinic_name'] = clinicName;
+      }
+      if (consultationFee != null) {
+        request.fields['consultation_fee'] = consultationFee.toString();
+      }
+      request.fields['online_consultation'] = onlineConsultation.toString();
+
+      if (profileImage != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath('profile_image', profileImage.path),
+        );
+      }
+      if (nationalIdImage != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+              'national_id_image', nationalIdImage.path),
+        );
+      }
+      if (syndicateCardImage != null) {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+              'syndicate_card_image', syndicateCardImage.path),
+        );
+      }
+
+      final streamed =
+          await request.send().timeout(const Duration(seconds: 25));
       final body = await streamed.stream.bytesToString();
       return jsonDecode(body);
     } catch (e) {
@@ -131,7 +243,15 @@ class ApiService {
             }),
           )
           .timeout(const Duration(seconds: 10));
-      return jsonDecode(res.body);
+      final body = jsonDecode(res.body);
+      // A 403 (unverified email) returns a custom body { message, role } with
+      // NO statusCode field, so attach the real HTTP status for the caller to
+      // branch on (e.g. route to the verification screen).
+      if (body is Map<String, dynamic>) {
+        body['statusCode'] = res.statusCode;
+        return body;
+      }
+      return {'statusCode': res.statusCode, 'data': body};
     } catch (e) {
       return {'error': 'Cannot connect to server'};
     }
@@ -139,12 +259,13 @@ class ApiService {
 
   static Future<Map<String, dynamic>> sendVerificationCode({
     required String email,
+    required String role,
   }) async {
     try {
       final res = await http.post(
         Uri.parse('$baseUrl/auth/send-verification'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email}),
+        body: jsonEncode({'email': email, 'role': role}),
       );
       return jsonDecode(res.body);
     } catch (e) {
@@ -154,13 +275,106 @@ class ApiService {
 
   static Future<Map<String, dynamic>> verifyCode({
     required String email,
+    required String role,
     required String code,
   }) async {
     try {
       final res = await http.post(
         Uri.parse('$baseUrl/auth/verify-code'),
         headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'role': role, 'code': code}),
+      );
+      final body = jsonDecode(res.body);
+      if (res.statusCode == 200) body['success'] = true;
+      return body;
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // ── Forgot password ─────────────────────────────────────────────────────────
+
+  // Step 1: request a reset code by email.
+  static Future<Map<String, dynamic>> forgotPassword({
+    required String email,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/auth/forgot-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      final body = jsonDecode(res.body);
+      if (res.statusCode == 200) body['success'] = true;
+      return body;
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // Step 2: validate the reset code before showing the new-password step.
+  static Future<Map<String, dynamic>> verifyResetCode({
+    required String email,
+    required String code,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/auth/verify-reset-code'),
+        headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': email, 'code': code}),
+      );
+      final body = jsonDecode(res.body);
+      if (res.statusCode == 200) body['success'] = true;
+      return body;
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // Step 3: set the new (shared) password.
+  static Future<Map<String, dynamic>> resetPassword({
+    required String email,
+    required String code,
+    required String password,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$baseUrl/auth/reset-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email, 'code': code, 'password': password}),
+      );
+      final body = jsonDecode(res.body);
+      if (res.statusCode == 200) body['success'] = true;
+      return body;
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  // Does this email already have an account? Used by signup to skip the
+  // password step (shared password per email).
+  static Future<Map<String, dynamic>> accountStatus({
+    required String email,
+  }) async {
+    try {
+      final res = await http
+          .get(Uri.parse(
+              '$baseUrl/auth/account-status?email=${Uri.encodeComponent(email)}'))
+          .timeout(const Duration(seconds: 10));
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {'exists': false, 'verified': false};
+    }
+  }
+
+  // All role-accounts sharing the logged-in user's email (in-app switcher).
+  // Pending accounts come back with email_verified=false and no access_token.
+  static Future<Map<String, dynamic>> myAccounts() async {
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/auth/my-accounts'),
+        headers: {'Authorization': 'Bearer $token'},
       );
       final body = jsonDecode(res.body);
       if (res.statusCode == 200) body['success'] = true;
@@ -257,6 +471,39 @@ class ApiService {
       return data.cast<Map<String, dynamic>>();
     }
     throw Exception('fetchNearbyDoctors: ${res.statusCode} ${res.body}');
+  }
+
+  // ── Account identity ──────────────────────────────────
+
+  /// The current account's gender + date of birth, read from the `users` table
+  /// (derived from the National ID at registration). Returns null on failure.
+  static Future<({String? gender, DateTime? dateOfBirth})?>
+      fetchMyIdentity() async {
+    try {
+      final token = await getToken();
+      final res = await http.get(
+        Uri.parse('$baseUrl/users/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 12));
+
+      if (res.statusCode == 200) {
+        final j = jsonDecode(res.body) as Map<String, dynamic>;
+        final dobRaw = j['date_of_birth'];
+        return (
+          gender: j['gender'] as String?,
+          dateOfBirth:
+              dobRaw != null ? DateTime.tryParse(dobRaw.toString()) : null,
+        );
+      }
+      debugPrint('fetchMyIdentity: ${res.statusCode} ${res.body}');
+      return null;
+    } catch (e) {
+      debugPrint('fetchMyIdentity error: $e');
+      return null;
+    }
   }
 
   // ── Reminders ─────────────────────────────────────────
@@ -430,6 +677,9 @@ class ApiService {
       case 'doctor':
         type = InAppNotificationType.doctor;
         break;
+      case 'chat':
+        type = InAppNotificationType.chat;
+        break;
       default:
         type = InAppNotificationType.general;
         break;
@@ -450,6 +700,8 @@ class ApiService {
       type: type,
       medicationName: j['medicationName'] as String?,
       doseStr: j['doseStr'] as String?,
+      conversationId: j['conversationId'] as String?,
+      specialty: j['specialty'] as String?,
       isDismissed: (j['isDismissed'] as bool?) ?? false,
     );
   }
@@ -462,6 +714,9 @@ class ApiService {
         break;
       case InAppNotificationType.doctor:
         type = 'doctor';
+        break;
+      case InAppNotificationType.chat:
+        type = 'chat';
         break;
       case InAppNotificationType.general:
         type = 'general';
@@ -476,6 +731,8 @@ class ApiService {
       'time': n.time.toIso8601String(),
       'medicationName': n.medicationName,
       'doseStr': n.doseStr,
+      'conversationId': n.conversationId,
+      'specialty': n.specialty,
       'isDismissed': n.isDismissed,
     };
   }
@@ -523,13 +780,24 @@ class ApiService {
         ? ReminderModel.parseMedicineFormOrFallback(j['form'])
         : null;
 
-    // Parse take_it → MealRelation
-    MealRelation? mealRelation;
-    final takeIt = j['take_it'] as String?;
-    if (takeIt != null) {
-      mealRelation = takeIt.startsWith('before_')
-          ? MealRelation.before
-          : MealRelation.after;
+    // Parse dose_times → slots; fall back to a single slot built from the
+    // legacy reminder_time / take_it / taken columns (old rows).
+    List<DoseTime> doseTimes = [];
+    final rawSlots = j['dose_times'];
+    if (rawSlots is List) {
+      doseTimes = rawSlots
+          .whereType<Map>()
+          .map((e) => DoseTime.fromJson(e.cast<String, dynamic>()))
+          .toList();
+    }
+    if (doseTimes.isEmpty) {
+      doseTimes = [
+        DoseTime(
+          time: TimeOfDay(hour: hour, minute: minute),
+          meal: MealRelationX.fromTakeIt(j['take_it'] as String?),
+          taken: (j['taken'] as bool?) ?? false,
+        ),
+      ];
     }
 
     // Parse priority
@@ -563,15 +831,13 @@ class ApiService {
       name: (j['name'] as String?) ?? '',
       type: type,
       form: form,
-      mealRelation: mealRelation,
       priority: priority,
       dose: dose,
       color: color,
-      time: TimeOfDay(hour: hour, minute: minute),
+      doseTimes: doseTimes,
       startDate: parseDate(j['start_date'] as String?) ?? DateTime.now(),
       endDate: parseDate(j['end_date'] as String?),
       weekDays: weekDays,
-      taken: (j['taken'] as bool?) ?? false,
     );
   }
 
@@ -597,26 +863,40 @@ class ApiService {
     }
   }
 
+  /// Persists the taken state of a single dose-time slot (by index).
+  static Future<void> markReminderSlotTaken({
+    required String id,
+    required int index,
+    required bool taken,
+  }) async {
+    try {
+      final token = await getToken();
+      await http
+          .patch(
+            Uri.parse('$baseUrl/reminders/$id/slot-taken'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'index': index, 'taken': taken}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('markReminderSlotTaken error: $e');
+    }
+  }
+
   static Map<String, dynamic> _reminderToDto(ReminderModel r) {
     // Keep the backend value distinct enough to restore the same icon later.
     final form = r.type == ReminderType.medicine
         ? ReminderModel.medicineFormToApi(r.form)
         : null;
 
-    // MealRelation → take_it
-    String? takeIt;
-    if (r.type == ReminderType.medicine && r.mealRelation != null) {
-      switch (r.mealRelation!) {
-        case MealRelation.before:
-          takeIt = 'before_breakfast';
-          break;
-        case MealRelation.after:
-        case MealRelation.withFood:
-        case MealRelation.anytime:
-          takeIt = 'after_breakfast';
-          break;
-      }
-    }
+    // The first slot's meal → legacy take_it enum column (null if generic).
+    final firstMeal =
+        r.doseTimes.isNotEmpty ? r.doseTimes.first.meal : MealRelation.afterBreakfast;
+    final String? takeIt =
+        r.type == ReminderType.medicine ? firstMeal.takeItValue : null;
 
     // Priority
     String? priority;
@@ -686,6 +966,7 @@ class ApiService {
       'reminder_time': timeStr,
       'repeat_days': repeatDays,
       'start_date': fmtDate(r.startDate),
+      'dose_times': r.doseTimes.map((d) => d.toJson()).toList(),
     };
 
     if (r.endDate != null) body['end_date'] = fmtDate(r.endDate!);

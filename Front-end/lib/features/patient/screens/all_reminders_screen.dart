@@ -57,7 +57,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final taken = _reminders.where((r) => r.taken).length;
+    final taken = _reminders.where((r) => r.allTaken).length;
 
     return Scaffold(
       appBar: AppBar(
@@ -186,7 +186,7 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
                                             color: context.text,
                                             fontWeight: FontWeight.w600,
                                             fontSize: 15,
-                                            decoration: r.taken
+                                            decoration: r.allTaken
                                                 ? TextDecoration.lineThrough
                                                 : null,
                                           )),
@@ -211,16 +211,16 @@ class _AllRemindersScreenState extends State<AllRemindersScreen> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 12, vertical: 6),
                                   decoration: BoxDecoration(
-                                    color: r.taken
+                                    color: r.allTaken
                                         ? AppColors.success.withOpacity(0.12)
                                         : r.color.withOpacity(0.12),
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: Text(
-                                    r.taken ? 'Done ✓' : 'Pending',
+                                    r.allTaken ? 'Done ✓' : 'Pending',
                                     style: TextStyle(
                                       color:
-                                          r.taken ? AppColors.success : r.color,
+                                          r.allTaken ? AppColors.success : r.color,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),

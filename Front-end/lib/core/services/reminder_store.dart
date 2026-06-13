@@ -42,19 +42,35 @@ class ReminderStore extends ChangeNotifier {
   }
 
   // ── Mark taken ─────────────────────────────────────────────────────────────
-  /// Called from both HomeTab and ReminderTab.
-  /// Updates in-memory state immediately, then persists to backend.
+  /// Marks ALL dose-time slots of a reminder taken/untaken (whole-reminder
+  /// quick action, e.g. from HomeTab). Persists to backend.
   Future<void> markTaken(String id, {bool taken = true}) async {
     final idx = _reminders.indexWhere((r) => r.id == id);
     if (idx >= 0) {
-      if (_reminders[idx].taken == taken) return; // already in desired state
-      _reminders[idx].taken = taken;
+      if (_reminders[idx].allTaken == taken) return;
+      for (final d in _reminders[idx].doseTimes) {
+        d.taken = taken;
+      }
       notifyListeners();
     }
-
-    // Always persist — reminder may not be in store yet (e.g. called from HomeTab)
     ApiService.markReminderTaken(id: id, taken: taken).catchError(
       (e) => debugPrint('ReminderStore.markTaken persist error: $e'),
+    );
+  }
+
+  /// Marks a single dose-time slot taken/untaken. Persists to backend.
+  Future<void> markSlotTaken(String id, int index, bool taken) async {
+    final idx = _reminders.indexWhere((r) => r.id == id);
+    if (idx >= 0) {
+      final slots = _reminders[idx].doseTimes;
+      if (index < 0 || index >= slots.length) return;
+      if (slots[index].taken == taken) return;
+      slots[index].taken = taken;
+      notifyListeners();
+    }
+    ApiService.markReminderSlotTaken(id: id, index: index, taken: taken)
+        .catchError(
+      (e) => debugPrint('ReminderStore.markSlotTaken persist error: $e'),
     );
   }
 
@@ -81,7 +97,11 @@ class ReminderStore extends ChangeNotifier {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-  int get takenCount => _reminders.where((r) => r.taken).length;
+  // Count individual dose-time slots (a reminder can have several per day).
+  int get takenCount =>
+      _reminders.fold(0, (sum, r) => sum + r.takenSlots);
+  int get slotTotal =>
+      _reminders.fold(0, (sum, r) => sum + r.slotCount);
 
   void clear() {
     _reminders = [];

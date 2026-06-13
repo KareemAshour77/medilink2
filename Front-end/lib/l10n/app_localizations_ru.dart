@@ -375,6 +375,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get nearBy => 'Рядом';
 
   @override
+  String get refreshLocation => 'Обновить местоположение';
+
+  @override
+  String get clinicLocation => 'Местоположение клиники';
+
+  @override
   String get myProfile => 'Мой профиль';
 
   @override

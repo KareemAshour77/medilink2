@@ -7,6 +7,7 @@ import '../../../core/services/api_service.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/services/reminder_store.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import 'add_reminder_sheet.dart';
 
 class ReminderTab extends StatefulWidget {
@@ -41,10 +42,10 @@ class _ReminderTabState extends State<ReminderTab> {
 
     if (result == null || !mounted) return;
 
-    // When editing: cancel the old notification and delete from backend
+    // When editing: cancel the old slot notifications and delete from backend
     if (existing != null) {
       try {
-        await NotificationService.cancel(existing.id);
+        await NotificationService.cancelReminderAllSlots(existing);
       } catch (e) {
         debugPrint('ReminderTab: cancel notification failed – $e');
       }
@@ -56,37 +57,16 @@ class _ReminderTabState extends State<ReminderTab> {
     if (!mounted) return;
 
     if (created == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to save reminder. Please try again.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      AppSnackBar.show(context, 'Failed to save reminder. Please try again.');
       return;
     }
 
     // Reload to reflect the canonical server state
     await _load();
 
-    // Schedule local notification for the newly created reminder
+    // Schedule one local notification per dose-time slot.
     try {
-      final now = DateTime.now();
-      DateTime scheduledTime = DateTime(
-        now.year,
-        now.month,
-        now.day,
-        created.time.hour,
-        created.time.minute,
-      );
-      if (scheduledTime.isBefore(now)) {
-        scheduledTime = scheduledTime.add(const Duration(days: 1));
-      }
-      await NotificationService.scheduleMedicationNotification(
-        reminderId: created.id,
-        medicationName: created.name,
-        dose: created.dose,
-        time: scheduledTime,
-      );
+      await NotificationService.scheduleReminderAllSlots(created);
     } catch (e) {
       debugPrint('ReminderTab: notification scheduling failed – $e');
     }
@@ -95,7 +75,7 @@ class _ReminderTabState extends State<ReminderTab> {
   // ── Delete ────────────────────────────────────────────
   Future<void> _delete(ReminderModel r) async {
     try {
-      await NotificationService.cancel(r.id);
+      await NotificationService.cancelReminderAllSlots(r);
     } catch (e) {
       debugPrint('ReminderTab: cancel notification failed – $e');
     }
@@ -106,12 +86,7 @@ class _ReminderTabState extends State<ReminderTab> {
     if (ok) {
       _store.removeReminder(r.id); // updates store → both tabs rebuild
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to delete reminder.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      AppSnackBar.show(context, 'Failed to delete reminder.');
     }
   }
 
@@ -180,7 +155,7 @@ class _ReminderTabState extends State<ReminderTab> {
                         color: AppColors.primary.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Text(context.l.takenToday(_store.takenCount, _store.reminders.length),
+                      child: Text(context.l.takenToday(_store.takenCount, _store.slotTotal),
                         style: const TextStyle(
                           color: AppColors.primary,
                           fontSize: 13,
@@ -210,9 +185,10 @@ class _ReminderTabState extends State<ReminderTab> {
                                   const SizedBox(height: 12),
                               itemBuilder: (_, i) => _ReminderCard(
                                 reminder: reminders[i],
-                                onTake: () =>
-                                    _store.markTaken(reminders[i].id,
-                                        taken: !reminders[i].taken),
+                                onSlotTake: (slotIndex) => _store.markSlotTaken(
+                                    reminders[i].id,
+                                    slotIndex,
+                                    !reminders[i].doseTimes[slotIndex].taken),
                                 onEat: () =>
                                     _store.toggleEaten(reminders[i].id),
                                 onEdit: () =>
@@ -257,14 +233,14 @@ class _ReminderTabState extends State<ReminderTab> {
 
 class _ReminderCard extends StatelessWidget {
   final ReminderModel reminder;
-  final VoidCallback onTake;
+  final void Function(int index) onSlotTake;
   final VoidCallback onEat;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _ReminderCard({
     required this.reminder,
-    required this.onTake,
+    required this.onSlotTake,
     required this.onEat,
     required this.onEdit,
     required this.onDelete,
@@ -350,127 +326,120 @@ class _ReminderCard extends StatelessWidget {
                     ),
                   ],
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Icon pill
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: r.color.withOpacity(context.isDark ? 0.2 : 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Image.asset(
-                  imagePath,
-                  width: 24,
-                  height: 24,
-                  errorBuilder: (context, error, stackTrace) {
-                    debugPrint('❌ Missing image: $imagePath');
-                    return Icon(Icons.medication, size: 24, color: r.color);
-                  },
-                ),
-              ),
-              const SizedBox(width: 14),
-
-              // Name + time + meal hint
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      r.name,
-                      style: TextStyle(
-                        color: context.text,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        decoration: r.taken ? TextDecoration.lineThrough : null,
-                      ),
+              // ── Header: icon + name/priority + "Ate" ──
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: r.color.withOpacity(context.isDark ? 0.2 : 0.12),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const SizedBox(height: 3),
-                    Row(children: [
-                      Icon(Icons.access_time_outlined,
-                          size: 12, color: r.color),
-                      const SizedBox(width: 4),
-                      Text(
-                        _fmtTime(r.time),
-                        style: TextStyle(
-                          color: r.color,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ]),
-                    if (r.type == ReminderType.medicine &&
-                        r.mealRelation != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        _mealLabel(context, r.mealRelation!),
-                        style: TextStyle(
-                          color: AppColors.grey.withOpacity(0.8),
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Row(
+                    child: Image.asset(
+                      imagePath,
+                      width: 24,
+                      height: 24,
+                      errorBuilder: (context, error, stackTrace) {
+                        debugPrint('❌ Missing image: $imagePath');
+                        return Icon(Icons.medication, size: 24, color: r.color);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          _priorityIcon(r.priority),
-                          size: 11,
-                          color: _priorityColor(r.priority),
-                        ),
-                        const SizedBox(width: 3),
                         Text(
-                          _priorityLabel(r.priority),
+                          r.name,
                           style: TextStyle(
-                            color: _priorityColor(r.priority),
-                            fontSize: 11,
+                            color: context.text,
                             fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                            decoration: r.allTaken
+                                ? TextDecoration.lineThrough
+                                : null,
                           ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(_priorityIcon(r.priority),
+                                size: 11, color: _priorityColor(r.priority)),
+                            const SizedBox(width: 3),
+                            Text(
+                              _priorityLabel(r.priority),
+                              style: TextStyle(
+                                color: _priorityColor(r.priority),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-
-              // Action chips
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _ActionChip(
-                    label: r.taken ? context.l.doneTick : context.l.take,
-                    color: r.taken ? AppColors.success : r.color,
-                    onTap: onTake,
                   ),
-                  if (r.type == ReminderType.medicine) ...[
-                    const SizedBox(height: 6),
+                  if (r.type == ReminderType.medicine)
                     _ActionChip(
                       label: context.l.ateAlready,
                       color: r.eaten ? AppColors.success : AppColors.grey,
                       onTap: onEat,
                     ),
-                  ],
                 ],
               ),
+
+              const SizedBox(height: 12),
+
+              // ── One row per dose-time slot ──
+              for (var i = 0; i < r.doseTimes.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.access_time_outlined, size: 13, color: r.color),
+                      const SizedBox(width: 5),
+                      Text(
+                        _fmtTime(r.doseTimes[i].time),
+                        style: TextStyle(
+                          color: r.color,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (r.type == ReminderType.medicine) ...[
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            r.doseTimes[i].meal.label,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: AppColors.grey.withOpacity(0.9),
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      _ActionChip(
+                        label: r.doseTimes[i].taken
+                            ? context.l.doneTick
+                            : context.l.take,
+                        color:
+                            r.doseTimes[i].taken ? AppColors.success : r.color,
+                        onTap: () => onSlotTake(i),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  String _mealLabel(BuildContext context, MealRelation m) {
-    switch (m) {
-      case MealRelation.before:
-        return context.l.beforeMeal;
-      case MealRelation.after:
-        return context.l.afterMeal;
-      case MealRelation.withFood:
-        return context.l.withFood;
-      case MealRelation.anytime:
-        return context.l.anytime;
-    }
   }
 
   Color _priorityColor(Priority p) {

@@ -131,6 +131,8 @@
 
   "menu": "Menü",
   "nearBy": "Yakınındakiler",
+  "refreshLocation": "Konumu yenile",
+  "clinicLocation": "Klinik konumu",
   "myProfile": "Profilim",
   "notifications": "Bildirimler",
   "helpSupport": "Yardım & Destek",

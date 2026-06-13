@@ -375,6 +375,12 @@ class AppLocalizationsFr extends AppLocalizations {
   String get nearBy => 'À proximité';
 
   @override
+  String get refreshLocation => 'Actualiser la position';
+
+  @override
+  String get clinicLocation => 'Emplacement de la clinique';
+
+  @override
   String get myProfile => 'Mon profil';
 
   @override

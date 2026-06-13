@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/auth/model/user_model.dart';
 import 'in_app_notification_store.dart';
 import 'chat_service.dart';
+import 'fcm_service.dart';
+import 'notification_service.dart';
 
 class SessionService {
   static const _userKey = 'current_user';
@@ -30,6 +32,8 @@ class SessionService {
           'image': user.image,
           'latitude': user.latitude,
           'longitude': user.longitude,
+          'verification_status': user.verificationStatus,
+          'medilink_id': user.medilinkId,
         }));
     if (user.token != null) {
       await prefs.setString(_tokenKey, user.token!);
@@ -50,6 +54,8 @@ class SessionService {
           'image': updatedUser.image,
           'latitude': updatedUser.latitude,
           'longitude': updatedUser.longitude,
+          'verification_status': updatedUser.verificationStatus,
+          'medilink_id': updatedUser.medilinkId,
         }));
   }
 
@@ -63,9 +69,14 @@ class SessionService {
   }
 
   static Future<void> clear() async {
+    // Clear FCM token from backend FIRST (needs auth token still in prefs)
+    await FcmService.instance.clearToken().catchError((_) {});
     userNotifier.value = null;
     InAppNotificationStore.instance.clear();
-    ChatService.instance.disconnect(); // drop stale socket auth on logout
+    // Cancel device-scheduled (OS-level) reminder notifications so the next
+    // account on this device doesn't inherit the previous account's reminders.
+    await NotificationService.cancelAll().catchError((_) {});
+    ChatService.instance.disconnect();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_userKey);
     await prefs.remove(_tokenKey);

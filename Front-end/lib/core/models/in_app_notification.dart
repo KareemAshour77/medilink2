@@ -1,4 +1,4 @@
-enum InAppNotificationType { medication, doctor, general }
+enum InAppNotificationType { medication, doctor, general, chat }
 
 class InAppNotification {
   final String id;
@@ -8,6 +8,8 @@ class InAppNotification {
   final InAppNotificationType type;
   final String? medicationName;
   final String? doseStr;
+  final String? conversationId;
+  final String? specialty;
   bool isDismissed;
 
   InAppNotification({
@@ -18,6 +20,8 @@ class InAppNotification {
     required this.type,
     this.medicationName,
     this.doseStr,
+    this.conversationId,
+    this.specialty,
     this.isDismissed = false,
   });
 }

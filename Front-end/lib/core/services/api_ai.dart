@@ -29,9 +29,9 @@ import 'package:http_parser/http_parser.dart';
 // Server base URL
 // ──────────────────────────────────────────────────────────────────────────────
 
-// const String kServerBaseUrl = 'http://172.20.10.3:8000';
+const String kServerBaseUrl = 'http://192.168.1.109:8000';
 //  const String kServerBaseUrl = 'http://192.168.1.103:8000';
- const String kServerBaseUrl = 'http://192.168.1.18:8000';
+//  const String kServerBaseUrl = 'http://192.168.1.18:8000';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // ChatResponse

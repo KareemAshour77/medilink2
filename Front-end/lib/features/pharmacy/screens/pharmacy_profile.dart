@@ -7,6 +7,7 @@ import '../../patient/screens/profile_edit_screen.dart';
 import '../../patient/screens/theme_picker_screen.dart';
 import '../../patient/screens/language_picker_screen.dart';
 import '../../../core/services/session_service.dart';
+import '../../auth/screens/role_chooser_screen.dart';
 
 class PharmacyProfile extends StatefulWidget {
   const PharmacyProfile({super.key});
@@ -24,6 +25,7 @@ class _PharmacyProfileState extends State<PharmacyProfile> {
     // Items built here so they update when language changes
     final items = [
       _MenuItem.image('assets/images/placeholder.png', l.nearBy, const Color(0xFF4CAF50), ''),
+      _MenuItem.icon(Icons.switch_account_rounded, 'Switch account', const Color(0xFF159E8C), ''),
       _MenuItem.icon(Icons.person_outline_rounded, l.myProfile, const Color(0xFF9C27B0), ''),
       _MenuItem.icon(Icons.nightlight_sharp, l.themes, const Color(0xFFFFC857), ''),
       _MenuItem.icon(Icons.language, l.language, const Color(0xFF2F80ED), ''),
@@ -141,18 +143,21 @@ class _PharmacyProfileState extends State<PharmacyProfile> {
                         onTap: () {
                           // index 0 — Nearby (no action yet)
                           if (i == 1) {
+                            // Switch / verify another account on this email
+                            openAccountSwitcher(context);
+                          } else if (i == 2) {
                             // My Profile
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ProfileEditScreen()));
-                          } else if (i == 2) {
+                          } else if (i == 3) {
                             // Themes
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ThemePickerScreen()));
-                          } else if (i == 3) {
+                          } else if (i == 4) {
                             // Language
                             Navigator.push(
                                 context,

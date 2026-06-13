@@ -2,8 +2,6 @@
 
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/widgets/theme_toggle_button.dart';
-import '../../../core/widgets/lang_toggle_button.dart';
 import 'login_screen.dart';
 import 'signup_screen.dart';
 
@@ -14,119 +12,118 @@ class WelcomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = context.isDark;
 
-    final gradientColors = isDark
-        ? [const Color(0xFF080F1C), const Color(0xFF0C1929)]
-        : [const Color(0xFFEFF6FF), const Color(0xFFE8F3FB), const Color(0xFFF4F9FF)];
+    // Soft branded gradient behind the logo — subtle, not overwhelming.
+    final heroColors = isDark
+        ? [AppColors.primaryDark.withOpacity(0.22), Colors.transparent]
+        : [
+            AppColors.primary.withOpacity(0.13),
+            AppColors.primary.withOpacity(0.02),
+          ];
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: gradientColors,
+      backgroundColor: context.bg,
+      body: Column(
+        children: [
+          // ── Branded hero with the logo + soft curved bottom ───────────
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 44,
+              bottom: 40,
+            ),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: heroColors,
+              ),
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(40),
+              ),
+            ),
+            child: Center(
+              child: SizedBox(
+                height: 76,
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // ── Top controls ─────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 16, 0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: const [
-                    LangToggleButton(),
-                    SizedBox(width: 2),
-                    ThemeToggleButton(),
+
+          // ── Content ───────────────────────────────────────────────────
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 32),
+
+                    // Tagline — primary, prominent
+                    Text(
+                      context.l.welcomeCompanion,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: context.text,
+                        fontSize: 21,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                        height: 1.35,
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Description — secondary
+                    Text(
+                      context.l.welcomeDesc,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: context.text.withOpacity(0.55),
+                        fontSize: 14,
+                        height: 1.6,
+                        letterSpacing: 0.1,
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Trust indicators — sit naturally under the description
+                    _TrustRow(),
+
+                    const Spacer(),
+
+                    // Sign Up — primary CTA
+                    _PrimaryButton(
+                      label: context.l.signUp,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SignupScreen()),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Log In — secondary
+                    _OutlineButton(
+                      label: context.l.logIn,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      ),
+                    ),
+
+                    const SizedBox(height: 32),
                   ],
                 ),
               ),
-
-              // ── Scrollable body ──────────────────────────────────────
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const SizedBox(height: 28),
-
-                      // Logo
-                      SizedBox(
-                        height: 88,
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-
-                      const SizedBox(height: 26),
-
-                      // Tagline
-                      Text(
-                        context.l.welcomeCompanion,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: AppColors.grey,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w400,
-                          letterSpacing: 0.3,
-                          height: 1.5,
-                        ),
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      // Description
-                      Text(
-                        context.l.welcomeDesc,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: context.text.withOpacity(0.5),
-                          fontSize: 13.5,
-                          height: 1.75,
-                          letterSpacing: 0.1,
-                        ),
-                      ),
-
-                      const Spacer(),
-
-                      // Trust indicators
-                      _TrustRow(),
-
-                      const SizedBox(height: 30),
-
-                      // Sign Up — primary CTA
-                      _PrimaryButton(
-                        label: context.l.signUp,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const SignupScreen()),
-                        ),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // Log In — secondary
-                      _OutlineButton(
-                        label: context.l.logIn,
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const LoginScreen()),
-                        ),
-                      ),
-
-                      const SizedBox(height: 38),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

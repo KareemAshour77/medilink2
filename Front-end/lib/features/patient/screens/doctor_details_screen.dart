@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/name_format.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/services/chat_api_service.dart';
 import '../../../core/services/chat_service.dart';
+import '../../../core/services/fcm_service.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/session_service.dart';
+import '../../../core/services/appointment_service.dart';
 import '../../../core/widgets/chat_widgets.dart';
 import '../../../data/records_data.dart';
 
@@ -30,6 +35,50 @@ class DoctorDetailsScreen extends StatelessWidget {
     this.doctorId = '',
     this.doctorImageUrl,
   });
+
+  void _showBookingSheet(BuildContext context, String doctorId, String doctorName) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _BookingSheet(doctorId: doctorId, doctorName: doctorName),
+    );
+  }
+
+  // Chat is gated server-side: only allowed once the doctor accepts a request.
+  // Pre-check here so the patient gets a clear message instead of a broken chat.
+  Future<void> _openChat(BuildContext context) async {
+    if (doctorId.isEmpty) {
+      AppSnackBar.show(context, 'Chat unavailable for this doctor.');
+      return;
+    }
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      await ChatApiService.getOrCreateConversation(doctorId);
+      if (!context.mounted) return;
+      Navigator.pop(context); // close loader
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PatientDoctorChatScreen(
+            doctorId: doctorId,
+            doctorName: name,
+            specialization: specialization,
+            doctorImageUrl: doctorImageUrl,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context); // close loader
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      AppSnackBar.show(context, msg);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,6 +103,7 @@ class DoctorDetailsScreen extends StatelessWidget {
             rating: rating,
             reviews: reviews,
             experience: experience,
+            doctorImageUrl: doctorImageUrl,
           ),
           const SizedBox(height: 18),
           const _InfoCards(),
@@ -87,20 +137,34 @@ class DoctorDetailsScreen extends StatelessWidget {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
-          child: _PulseChatButton(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => PatientDoctorChatScreen(
-                    doctorId: doctorId,
-                    doctorName: name,
-                    specialization: specialization,
-                    doctorImageUrl: doctorImageUrl,
+          child: Row(
+            children: [
+              Expanded(
+                child: _PulseBookButton(
+                  onPressed: () => _showBookingSheet(context, doctorId, name),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _openChat(context),
+                  icon: const Icon(Icons.chat_bubble_outline_rounded),
+                  label: const Text('Chat Now'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: const BorderSide(color: AppColors.primary, width: 1.8),
+                    minimumSize: const Size(0, 56),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-              );
-            },
+              ),
+            ],
           ),
         ),
       ),
@@ -114,6 +178,7 @@ class _DoctorProfileHeader extends StatelessWidget {
   final double rating;
   final int reviews;
   final String experience;
+  final String? doctorImageUrl;
 
   const _DoctorProfileHeader({
     required this.name,
@@ -121,7 +186,21 @@ class _DoctorProfileHeader extends StatelessWidget {
     required this.rating,
     required this.reviews,
     required this.experience,
+    this.doctorImageUrl,
   });
+
+  Widget _fallbackImage() => Padding(
+        padding: const EdgeInsets.all(14),
+        child: Image.asset(
+          'assets/images/Stethoscope.png',
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const Icon(
+            Icons.person_rounded,
+            color: AppColors.primary,
+            size: 20,
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -157,15 +236,15 @@ class _DoctorProfileHeader extends StatelessWidget {
             ),
           ),
           child: ClipOval(
-            child: Image.asset(
-              'assets/images/male-doctor.png',
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const Icon(
-                Icons.person_rounded,
-                color: AppColors.primary,
-                size: 44,
-              ),
-            ),
+            child: (doctorImageUrl != null && doctorImageUrl!.isNotEmpty)
+                ? Image.network(
+                    doctorImageUrl!,
+                    fit: BoxFit.cover,
+                    width: 86,
+                    height: 86,
+                    errorBuilder: (_, __, ___) => _fallbackImage(),
+                  )
+                : _fallbackImage(),
           ),
         ),
         const SizedBox(width: 16),
@@ -174,7 +253,7 @@ class _DoctorProfileHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                name,
+                drName(name),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -542,7 +621,246 @@ class _PulseChatButtonState extends State<_PulseChatButton>
                   color: Colors.white, size: 22),
               SizedBox(width: 10),
               Text(
-                'Start Chat',
+                'Chat Now',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Booking sheet ─────────────────────────────────────────────────────────────
+
+class _BookingApptType {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  const _BookingApptType(this.title, this.subtitle, this.icon);
+}
+
+const _kApptTypes = [
+  _BookingApptType('Follow-Up', 'Return visit for an existing condition', Icons.event_repeat_rounded),
+  _BookingApptType('Check-Up', 'Routine health examination', Icons.health_and_safety_rounded),
+  _BookingApptType('Consultation', 'First-time advice or second opinion', Icons.record_voice_over_outlined),
+];
+
+class _BookingSheet extends StatefulWidget {
+  final String doctorId;
+  final String doctorName;
+  const _BookingSheet({required this.doctorId, required this.doctorName});
+
+  @override
+  State<_BookingSheet> createState() => _BookingSheetState();
+}
+
+class _BookingSheetState extends State<_BookingSheet> {
+  String? _selected;
+  bool _loading = false;
+
+  Future<void> _book() async {
+    if (_selected == null) return;
+    setState(() => _loading = true);
+    try {
+      await AppointmentService.book(doctorId: widget.doctorId, type: _selected!);
+      if (!mounted) return;
+      Navigator.pop(context);
+      AppSnackBar.show(context, 'Request sent to ${widget.doctorName}!', backgroundColor: AppColors.primary);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      AppSnackBar.show(context, msg);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: BoxDecoration(
+          color: context.card,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.grey.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Book Appointment',
+                  style: TextStyle(color: context.text, fontSize: 20, fontWeight: FontWeight.w800)),
+            ),
+            const SizedBox(height: 4),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Select appointment type',
+                  style: TextStyle(color: AppColors.grey, fontSize: 13)),
+            ),
+            const SizedBox(height: 20),
+            for (final t in _kApptTypes)
+              _TypeCard(
+                type: t,
+                selected: _selected == t.title,
+                onTap: () => setState(() => _selected = t.title),
+              ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton(
+                onPressed: _selected == null || _loading ? null : _book,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  disabledBackgroundColor: AppColors.primary.withOpacity(0.4),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+                  elevation: 0,
+                ),
+                child: _loading
+                    ? const SizedBox(
+                        width: 22, height: 22,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                    : const Text('Book',
+                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            SizedBox(height: MediaQuery.of(context).viewInsets.bottom + 16),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TypeCard extends StatelessWidget {
+  final _BookingApptType type;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TypeCard({required this.type, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.primary.withOpacity(context.isDark ? 0.2 : 0.08)
+              : context.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? AppColors.primary : context.divider,
+            width: selected ? 1.8 : 1,
+          ),
+        ),
+        child: Row(children: [
+          Container(
+            width: 44, height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(selected ? 0.2 : 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(type.icon, color: AppColors.primary, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(type.title,
+                  style: TextStyle(color: context.text, fontWeight: FontWeight.w700, fontSize: 14)),
+              const SizedBox(height: 3),
+              Text(type.subtitle, style: const TextStyle(color: AppColors.grey, fontSize: 12)),
+            ]),
+          ),
+          if (selected)
+            const Icon(Icons.check_circle_rounded, color: AppColors.primary, size: 20),
+        ]),
+      ),
+    );
+  }
+}
+
+class _PulseBookButton extends StatefulWidget {
+  final VoidCallback onPressed;
+
+  const _PulseBookButton({required this.onPressed});
+
+  @override
+  State<_PulseBookButton> createState() => _PulseBookButtonState();
+}
+
+class _PulseBookButtonState extends State<_PulseBookButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+    )..repeat(reverse: true);
+    _scale = Tween<double>(begin: 1, end: 1.035).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        child: Container(
+          width: double.infinity,
+          height: 58,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(30),
+            gradient: const LinearGradient(
+              colors: [AppColors.primary, AppColors.primaryDark],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primaryDark.withOpacity(0.36),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.calendar_month_rounded, color: Colors.white, size: 22),
+              SizedBox(width: 10),
+              Text(
+                'Book',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 16,
@@ -588,6 +906,53 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
   bool _loading = true;
   String? _error;
   bool _doctorOnline = false;
+  DateTime? _lastSeen;
+
+  // Typing
+  bool _doctorTyping = false;
+  bool _isSendingTyping = false;
+  Timer? _typingDebounce;
+  ChatMsg? _replyTo;
+  String? _highlightedId;
+  final Map<String, GlobalKey> _messageKeys = {};
+
+  GlobalKey _keyFor(String id) =>
+      _messageKeys.putIfAbsent(id, () => GlobalKey());
+
+  Future<void> _scrollToMessage(String msgId) async {
+    final key = _keyFor(msgId);
+
+    Future<void> ensureVisible() async {
+      final ctx = key.currentContext;
+      if (ctx == null) return;
+      await Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+        alignment: 0.3,
+      );
+    }
+
+    if (key.currentContext != null) {
+      await ensureVisible();
+    } else {
+      final idx = _messages.indexWhere((m) => m.id == msgId);
+      if (idx < 0 || !_scroll.hasClients) return;
+      final ratio = idx / _messages.length;
+      await _scroll.animateTo(
+        _scroll.position.maxScrollExtent * ratio,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOutCubic,
+      );
+      await Future.delayed(const Duration(milliseconds: 60));
+      await ensureVisible();
+    }
+
+    if (!mounted) return;
+    setState(() => _highlightedId = msgId);
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (mounted) setState(() => _highlightedId = null);
+  }
 
   @override
   void initState() {
@@ -603,6 +968,7 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
     try {
       final conv = await ChatApiService.getOrCreateConversation(widget.doctorId);
       _conversationId = conv['id'] as String;
+      FcmService.activeChatConversationId = _conversationId;
 
       final history = await ChatApiService.getMessages(_conversationId!);
       if (!mounted) return;
@@ -612,8 +978,7 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
       });
       _scrollToBottom();
 
-      final token = await ApiService.getToken();
-      await ChatService.instance.connect(token ?? '');
+      await ChatService.instance.connect();
       ChatService.instance.joinRoom(_conversationId!);
 
       // Mark existing messages as read
@@ -624,15 +989,35 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
       ChatService.instance.onMessageEdited(_onEdited);
       ChatService.instance.onMessageDeletedEveryone(_onDeletedEveryone);
       ChatService.instance.onMessagesRead(_onRead);
+      ChatService.instance.onMessageDelivered(_onDelivered);
       ChatService.instance.onUserOnline((id) {
         if (id == widget.doctorId && mounted) setState(() => _doctorOnline = true);
       });
-      ChatService.instance.onUserOffline((id) {
-        if (id == widget.doctorId && mounted) setState(() => _doctorOnline = false);
+      ChatService.instance.onUserOffline((id, lastSeen) {
+        if (id == widget.doctorId && mounted) {
+          setState(() { _doctorOnline = false; _lastSeen = lastSeen; });
+        }
+      });
+      // Request current status in case the doctor was already online/offline
+      ChatService.instance.onUserStatus((id, online, lastSeen) {
+        if (id == widget.doctorId && mounted) {
+          setState(() {
+            _doctorOnline = online;
+            if (!online && lastSeen != null) _lastSeen = lastSeen;
+          });
+        }
+      });
+      ChatService.instance.getUserStatus(widget.doctorId);
+      ChatService.instance.onTypingStart((id) {
+        if (id == widget.doctorId && mounted) setState(() => _doctorTyping = true);
+      });
+      ChatService.instance.onTypingStop((id) {
+        if (id == widget.doctorId && mounted) setState(() => _doctorTyping = false);
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() { _loading = false; _error = 'Could not open chat: $e'; });
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      setState(() { _loading = false; _error = msg; });
     }
   }
 
@@ -640,11 +1025,48 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
     final msg = ChatMsg.fromJson(data);
     if (_messages.any((m) => m.id == msg.id)) return;
     if (!mounted) return;
-    setState(() => _messages.add(msg));
+    setState(() {
+      _messages.add(msg);
+      if (msg.senderId == widget.doctorId) _doctorTyping = false;
+    });
     _scrollToBottom();
-    // Auto-mark read since screen is open
     if (msg.senderId != _myId && _conversationId != null) {
+      ChatService.instance.ackDelivered(msg.id);
       ChatService.instance.markRead(_conversationId!);
+    }
+  }
+
+  void _onDelivered(Map<String, dynamic> data) {
+    final id = data['messageId'] as String?;
+    if (id == null || !mounted) return;
+    setState(() {
+      final i = _messages.indexWhere((m) => m.id == id);
+      if (i >= 0 && _messages[i].deliveredAt == null) {
+        _messages[i] = _messages[i].copyWith(
+          deliveredAt: DateTime.tryParse(data['deliveredAt']?.toString() ?? '') ?? DateTime.now(),
+        );
+      }
+    });
+  }
+
+  // ── Typing detection ─────────────────────────────────────────────────────────
+  void _onTextChanged(String text) {
+    if (_conversationId == null) return;
+    if (!_isSendingTyping && text.isNotEmpty) {
+      _isSendingTyping = true;
+      ChatService.instance.startTyping(_conversationId!, otherId: widget.doctorId);
+    }
+    _typingDebounce?.cancel();
+    _typingDebounce = Timer(const Duration(seconds: 2), () {
+      if (_isSendingTyping && _conversationId != null) {
+        _isSendingTyping = false;
+        ChatService.instance.stopTyping(_conversationId!, otherId: widget.doctorId);
+      }
+    });
+    if (text.isEmpty && _isSendingTyping && _conversationId != null) {
+      _isSendingTyping = false;
+      _typingDebounce?.cancel();
+      ChatService.instance.stopTyping(_conversationId!, otherId: widget.doctorId);
     }
   }
 
@@ -667,10 +1089,15 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
   }
 
   void _onRead(Map<String, dynamic> data) {
-    if (!mounted) return;
+    // Only update ticks when the OTHER person read my messages.
+    // If readBy == _myId I triggered this event myself — ignore it.
+    final readBy = data['readBy'] as String?;
+    if (readBy == null || readBy == _myId || !mounted) return;
     setState(() {
       _messages = _messages.map((m) {
-        if (m.senderId == _myId && !m.isRead) return m.copyWith(isRead: true);
+        if (m.senderId == _myId && !m.isRead) {
+          return m.copyWith(isRead: true, deliveredAt: m.deliveredAt ?? DateTime.now());
+        }
         return m;
       }).toList();
     });
@@ -681,7 +1108,14 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
     final text = _ctrl.text.trim();
     if (text.isEmpty || _conversationId == null) return;
     _ctrl.clear();
-    ChatService.instance.sendMessage(_conversationId!, text);
+    if (_isSendingTyping) {
+      _isSendingTyping = false;
+      _typingDebounce?.cancel();
+      ChatService.instance.stopTyping(_conversationId!, otherId: widget.doctorId);
+    }
+    final replyId = _replyTo?.id;
+    setState(() => _replyTo = null);
+    ChatService.instance.sendMessage(_conversationId!, text, replyToId: replyId);
   }
 
   // ── Media picker ────────────────────────────────────────────────────────────
@@ -715,9 +1149,7 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
       // Gateway broadcasts new_message to room — _onNew handles the UI update
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e'), backgroundColor: Colors.red),
-        );
+        AppSnackBar.show(context, 'Upload failed: $e');
       }
     }
   }
@@ -905,6 +1337,11 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
 
   @override
   void dispose() {
+    FcmService.activeChatConversationId = null;
+    _typingDebounce?.cancel();
+    if (_isSendingTyping && _conversationId != null) {
+      ChatService.instance.stopTyping(_conversationId!, otherId: widget.doctorId);
+    }
     if (_conversationId != null) ChatService.instance.leaveRoom(_conversationId!);
     ChatService.instance.offAll();
     _ctrl.dispose();
@@ -922,14 +1359,38 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
         imageUrl: widget.doctorImageUrl,
         isOnline: _doctorOnline,
         isVerifiedDoctor: true,
+        isTyping: _doctorTyping,
+        lastSeen: _lastSeen,
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.call_outlined), onPressed: () {}),
+          IconButton(
+              icon: const Icon(Icons.more_vert_rounded), onPressed: () {}),
+        ],
       ),
       body: Column(children: [
+        ValueListenableBuilder<bool>(
+          valueListenable: ChatService.instance.connectionNotifier,
+          builder: (_, connected, __) {
+            if (connected) return const SizedBox.shrink();
+            return const ConnectionBanner();
+          },
+        ),
         Expanded(child: _buildBody()),
+        if (_doctorTyping)
+          TypingIndicator(name: widget.doctorName),
+        if (_replyTo != null)
+          ReplyBar(
+            message: _replyTo!,
+            myId: _myId,
+            onCancel: () => setState(() => _replyTo = null),
+          ),
         ChatInputBar(
           controller: _ctrl,
           onSend: _send,
           onAttach: _showAttachMenu,
           onCamera: _pickFromCamera,
+          onChanged: _onTextChanged,
         ),
       ]),
     );
@@ -958,6 +1419,10 @@ class _PatientDoctorChatScreenState extends State<PatientDoctorChatScreen> {
       onLongPress: _showMsgOptions,
       onImageTap: (url) => Navigator.push(context,
           MaterialPageRoute(builder: (_) => ImageFullScreen(url: url))),
+      onSwipeReply: (msg) => setState(() => _replyTo = msg),
+      onTapReply: _scrollToMessage,
+      keyFor: _keyFor,
+      highlightedMessageId: _highlightedId,
     );
     return ListView.builder(
       controller: _scroll,

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/services/session_service.dart';
 import '../../../core/services/api_service.dart';
 import '../../auth/model/user_model.dart';
@@ -195,6 +196,11 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
     setState(() => _isSaving = true);
 
+    // Persist gender locally (0 = male, 1 = female) so features like the
+    // Emergency Card can read it as the source of truth.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_prefGender, _genderIndex);
+
     final response = await ApiService.updateProfile(
       name: _nameController.text.trim(),
       email: _emailController.text.trim(),
@@ -204,9 +210,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
     if (response['error'] != null) {
       setState(() => _isSaving = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(response['error'])),
-      );
+      AppSnackBar.show(context, response['error'].toString());
       return;
     }
 
@@ -233,17 +237,7 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Profile saved successfully'),
-        backgroundColor: AppColors.success,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        margin: const EdgeInsets.all(16),
-      ),
-    );
+    AppSnackBar.show(context, 'Profile saved successfully', backgroundColor: AppColors.success);
 
     Navigator.pop(context);
   }

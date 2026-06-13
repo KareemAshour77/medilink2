@@ -5,12 +5,15 @@ import 'package:medilink/core/services/api_service.dart';
 import 'package:medilink/core/services/in_app_notification_store.dart';
 import 'package:medilink/core/services/reminder_store.dart';
 import 'package:medilink/core/services/location_service.dart';
+import 'package:medilink/core/services/notification_service.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/name_format.dart';
 import '../../../models/reminder_model.dart';
 import 'chatbot_screen.dart';
 import 'all_doctors_screen.dart';
 import '../../../core/widgets/notification_bell_button.dart';
 import '../../../core/services/session_service.dart';
+import '../../../core/services/fcm_service.dart';
 // ignore: unused_import
 import 'all_reminders_screen.dart';
 import 'category_screen.dart';
@@ -78,8 +81,9 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  List<ReminderModel> _reminders = [];
-  bool _isLoadingReminders = false;
+  // Single source of truth, shared with ReminderTab. Listening to it keeps the
+  // Upcoming Schedule in sync with adds/deletes/takes made on the Reminders tab.
+  final _store = ReminderStore.instance;
 
   List<_DoctorData> _apiDoctors = [];
   bool _loadingDoctors = false;
@@ -106,6 +110,7 @@ class _HomeTabState extends State<HomeTab> {
   void initState() {
     super.initState();
     _catNotifier.addListener(_onCategoryChanged);
+    _store.addListener(_onStoreChanged);
     _loadReminders();
     _loadDoctors();
   }
@@ -113,29 +118,28 @@ class _HomeTabState extends State<HomeTab> {
   @override
   void dispose() {
     _catNotifier.removeListener(_onCategoryChanged);
+    _store.removeListener(_onStoreChanged);
     super.dispose();
+  }
+
+  /// Rebuild the Upcoming Schedule whenever the shared store changes.
+  void _onStoreChanged() {
+    if (mounted) setState(() {});
   }
 
   // ── Data ─────────────────────────────────────────────────────────────────
   Future<void> _loadReminders() async {
+    // Loads into the shared store (which notifies listeners on completion).
+    await _store.load();
     if (!mounted) return;
-    setState(() => _isLoadingReminders = true);
 
+    // Re-schedule this account's reminders. Session clear() cancels all
+    // device-scheduled notifications on login/switch (so a new account never
+    // inherits another's), so we rebuild the current user's here.
     try {
-      final reminders = await ApiService.fetchReminders();
-      reminders.sort((a, b) {
-        final aMin = a.time.hour * 60 + a.time.minute;
-        final bMin = b.time.hour * 60 + b.time.minute;
-        return aMin.compareTo(bMin);
-      });
-
-      if (mounted) {
-        setState(() => _reminders = reminders);
-      }
+      await NotificationService.rescheduleAll(_store.reminders);
     } catch (e) {
-      debugPrint('HomeTab._loadReminders error: $e');
-    } finally {
-      if (mounted) setState(() => _isLoadingReminders = false);
+      debugPrint('HomeTab._loadReminders reschedule error: $e');
     }
   }
 
@@ -228,6 +232,14 @@ class _HomeTabState extends State<HomeTab> {
                           ),
                           onClearedAll: () =>
                               InAppNotificationStore.instance.dismissAll(),
+                          onNotificationRead: (notification) async {
+                            if (notification.conversationId != null) {
+                              // Close the bell sheet first, then navigate
+                              Navigator.of(context).pop();
+                              FcmService.chatNavNotifier.value =
+                                  notification.conversationId;
+                            }
+                          },
                         );
                       },
                     ),
@@ -360,12 +372,12 @@ class _HomeTabState extends State<HomeTab> {
             ),
             const SizedBox(height: 12),
 
-            if (_isLoadingReminders)
+            if (_store.loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (_reminders.isEmpty)
+            else if (_store.reminders.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(
@@ -375,12 +387,13 @@ class _HomeTabState extends State<HomeTab> {
               )
             else
               ...() {
-                final sorted = _reminders.where((r) => !r.taken).toList()
-                  ..sort((a, b) {
-                    final aMin = a.time.hour * 60 + a.time.minute;
-                    final bMin = b.time.hour * 60 + b.time.minute;
-                    return aMin.compareTo(bMin);
-                  });
+                final sorted =
+                    _store.reminders.where((r) => !r.allTaken).toList()
+                      ..sort((a, b) {
+                        final aMin = a.time.hour * 60 + a.time.minute;
+                        final bMin = b.time.hour * 60 + b.time.minute;
+                        return aMin.compareTo(bMin);
+                      });
 
                 if (sorted.isEmpty) {
                   return [
@@ -430,12 +443,9 @@ class _HomeTabState extends State<HomeTab> {
                       sub: '$timeStr  •  $doseStr dose',
                       color: r.color,
                       bgLight: r.color.withOpacity(0.1),
-                      onTake: () {
-                        final idx = _reminders.indexWhere((x) => x.id == r.id);
-                        if (idx < 0) return;
-                        setState(() => _reminders[idx].taken = true);
-                        ReminderStore.instance.markTaken(r.id, taken: true);
-                      },
+                      // Mark the whole reminder taken; the store notifies and
+                      // both this section and the Reminders tab rebuild.
+                      onTake: () => _store.markTaken(r.id, taken: true),
                     ),
                   );
                 }).toList();
@@ -1053,7 +1063,7 @@ class _DoctorCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name,
+                Text(drName(name),
                     style: TextStyle(
                         color: context.text,
                         fontWeight: FontWeight.w600,

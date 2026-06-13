@@ -1,12 +1,14 @@
 // ignore_for_file: deprecated_member_use, prefer_const_constructors
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geocoding/geocoding.dart';
 
 import '../../../core/services/api_service.dart';
+import '../../../core/services/location_service.dart';
 import '../../../core/services/session_service.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import '../../auth/model/user_model.dart';
 
 class DoctorLocationPickerScreen extends StatefulWidget {
@@ -21,6 +23,9 @@ class _DoctorLocationPickerScreenState
     extends State<DoctorLocationPickerScreen> {
   late LatLng _selected;
   bool _isSaving = false;
+  bool _isSearching = false;
+  GoogleMapController? _controller;
+  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -30,6 +35,50 @@ class _DoctorLocationPickerScreenState
       user?.latitude ?? 30.0444,
       user?.longitude ?? 31.2357,
     );
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _moveTo(LatLng p, {double zoom = 15}) {
+    setState(() => _selected = p);
+    _controller?.animateCamera(CameraUpdate.newLatLngZoom(p, zoom));
+  }
+
+  // ── Search an address and jump the pin there ──────────────────────────────
+  Future<void> _searchAddress(String query) async {
+    if (query.trim().isEmpty) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _isSearching = true);
+    try {
+      final results = await locationFromAddress(query);
+      if (!mounted) return;
+      if (results.isEmpty) {
+        AppSnackBar.show(context, 'No place found for "$query".');
+        return;
+      }
+      _moveTo(LatLng(results.first.latitude, results.first.longitude));
+    } catch (_) {
+      if (!mounted) return;
+      AppSnackBar.show(context, 'Could not find that address.');
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  // ── Jump the pin to the doctor's current GPS position ─────────────────────
+  Future<void> _useCurrentLocation() async {
+    final pos = await LocationService.getLocation();
+    if (!mounted) return;
+    if (pos != null) {
+      _moveTo(LatLng(pos.latitude, pos.longitude));
+    } else {
+      AppSnackBar.show(context, 'Could not get location. Check GPS and permission.');
+    }
   }
 
   Future<void> _saveLocation() async {
@@ -45,13 +94,11 @@ class _DoctorLocationPickerScreenState
     setState(() => _isSaving = false);
 
     if (response['success'] != true) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(response['message']?.toString() ??
-              response['error']?.toString() ??
-              'Failed to save location'),
-          behavior: SnackBarBehavior.floating,
-        ),
+      AppSnackBar.show(
+        context,
+        response['message']?.toString() ??
+            response['error']?.toString() ??
+            'Failed to save location',
       );
       return;
     }
@@ -68,12 +115,7 @@ class _DoctorLocationPickerScreenState
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Location saved successfully'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    AppSnackBar.show(context, 'Location saved successfully', backgroundColor: Colors.green);
     Navigator.pop(context);
   }
 
@@ -96,36 +138,79 @@ class _DoctorLocationPickerScreenState
       body: Column(
         children: [
           Expanded(
-            child: FlutterMap(
-              options: MapOptions(
-                initialCenter: _selected,
-                initialZoom: 14,
-                onTap: (_, point) => setState(() => _selected = point),
-              ),
+            child: Stack(
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.medilink.app',
-                ),
-                MarkerLayer(
-                  markers: [
+                GoogleMap(
+                  onMapCreated: (c) => _controller = c,
+                  initialCameraPosition:
+                      CameraPosition(target: _selected, zoom: 14),
+                  onTap: (pos) => setState(() => _selected = pos),
+                  markers: {
                     Marker(
-                      point: _selected,
-                      width: 54,
-                      height: 54,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: RoleTheme.doctor.withOpacity(0.15),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.location_pin,
-                          color: RoleTheme.doctor,
-                          size: 42,
-                        ),
+                      markerId: const MarkerId('clinic'),
+                      position: _selected,
+                    ),
+                  },
+                  myLocationEnabled: true,
+                  myLocationButtonEnabled: false,
+                  zoomControlsEnabled: false,
+                ),
+
+                // ── Search bar overlay ──────────────────────────────────
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  right: 12,
+                  child: Material(
+                    elevation: 3,
+                    borderRadius: BorderRadius.circular(14),
+                    color: context.card,
+                    child: TextField(
+                      controller: _searchCtrl,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: _searchAddress,
+                      style: TextStyle(color: context.text, fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: 'Search clinic or address…',
+                        hintStyle:
+                            const TextStyle(color: AppColors.grey, fontSize: 14),
+                        prefixIcon: const Icon(Icons.search_rounded,
+                            color: AppColors.grey, size: 20),
+                        suffixIcon: _isSearching
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              )
+                            : IconButton(
+                                icon: const Icon(Icons.arrow_forward_rounded,
+                                    color: RoleTheme.doctor, size: 20),
+                                onPressed: () =>
+                                    _searchAddress(_searchCtrl.text),
+                              ),
+                        border: InputBorder.none,
+                        contentPadding:
+                            const EdgeInsets.symmetric(vertical: 14),
                       ),
                     ),
-                  ],
+                  ),
+                ),
+
+                // ── Use my current location button ──────────────────────
+                Positioned(
+                  bottom: 16,
+                  right: 16,
+                  child: FloatingActionButton(
+                    heroTag: 'gps',
+                    backgroundColor: context.card,
+                    foregroundColor: RoleTheme.doctor,
+                    onPressed: _useCurrentLocation,
+                    child: const Icon(Icons.my_location_rounded),
+                  ),
                 ),
               ],
             ),
@@ -144,7 +229,7 @@ class _DoctorLocationPickerScreenState
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Tap the map to place your clinic pin.',
+                    'Search, tap the map, or use your location to place the clinic pin.',
                     style: TextStyle(
                       color: context.text,
                       fontSize: 15,

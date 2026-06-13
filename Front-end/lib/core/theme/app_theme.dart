@@ -1,15 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../l10n/app_localizations.dart';
 import '../../features/auth/model/user_model.dart';
+
+// Persistence keys for the user's theme + language choice.
+const _kThemeKey = 'app_theme_mode';
+const _kLocaleKey = 'app_locale';
 
 // ─── Global theme notifier ────────────────────────────────────────────────────
 // Every widget that reads this will rebuild automatically when theme changes.
 final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.light);
 
 void toggleTheme() {
-  themeNotifier.value =
-      themeNotifier.value == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+  setThemeMode(
+      themeNotifier.value == ThemeMode.light ? ThemeMode.dark : ThemeMode.light);
+}
+
+// Set + persist the theme mode.
+Future<void> setThemeMode(ThemeMode mode) async {
+  themeNotifier.value = mode;
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(
+    _kThemeKey,
+    mode == ThemeMode.dark
+        ? 'dark'
+        : mode == ThemeMode.system
+            ? 'system'
+            : 'light',
+  );
 }
 
 // ─── Language notifier ────────────────────────────────────────────────────────
@@ -21,7 +40,29 @@ void toggleLang() {
 
   int next = (current + 1) % langs.length;
 
-  langNotifier.value = Locale(langs[next]);
+  setLocale(langs[next]);
+}
+
+// Set + persist the app language.
+Future<void> setLocale(String code) async {
+  langNotifier.value = Locale(code);
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_kLocaleKey, code);
+}
+
+// Load the saved theme + language at startup (call before runApp).
+Future<void> loadSavedPreferences() async {
+  final prefs = await SharedPreferences.getInstance();
+  final code = prefs.getString(_kLocaleKey);
+  if (code != null) langNotifier.value = Locale(code);
+  final theme = prefs.getString(_kThemeKey);
+  if (theme != null) {
+    themeNotifier.value = theme == 'dark'
+        ? ThemeMode.dark
+        : theme == 'system'
+            ? ThemeMode.system
+            : ThemeMode.light;
+  }
 }
 
 bool get isArabic => langNotifier.value.languageCode == 'ar';
@@ -51,6 +92,7 @@ class AppColors {
   static const labcatdark = Color(0xFF2E7D32);
   static const scancat = Color(0xFF019395);
   static const scancatdark = Color(0xFF015152);
+  static const label = Color(0xFF000000);
 }
 
 // ─── Helper: read isDark from context ────────────────────────────────────────

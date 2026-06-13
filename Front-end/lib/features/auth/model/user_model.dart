@@ -11,6 +11,10 @@ class UserModel {
   final String? image;
   final double? latitude;
   final double? longitude;
+  // Doctors only: 'pending' | 'approved' | 'rejected'. Null for other roles.
+  final String? verificationStatus;
+  // Public, shareable 7-digit account ID (read-only).
+  final String? medilinkId;
 
   const UserModel({
     required this.id,
@@ -21,7 +25,12 @@ class UserModel {
     this.image,
     this.latitude,
     this.longitude,
+    this.verificationStatus,
+    this.medilinkId,
   });
+
+  bool get isPendingDoctor =>
+      role == UserRole.doctor && verificationStatus == 'pending';
 
   factory UserModel.fromJson(Map<String, dynamic> j) => UserModel(
         id: j['id']?.toString() ?? '',
@@ -38,6 +47,8 @@ class UserModel {
             : null,
         latitude: _parseDouble(j['latitude']),
         longitude: _parseDouble(j['longitude']),
+        verificationStatus: j['verification_status']?.toString(),
+        medilinkId: j['medilink_id']?.toString(),
       );
 
   UserModel copyWith({
@@ -49,6 +60,8 @@ class UserModel {
     String? image,
     double? latitude,
     double? longitude,
+    String? verificationStatus,
+    String? medilinkId,
   }) =>
       UserModel(
         id: id ?? this.id,
@@ -59,6 +72,8 @@ class UserModel {
         image: image ?? this.image,
         latitude: latitude ?? this.latitude,
         longitude: longitude ?? this.longitude,
+        verificationStatus: verificationStatus ?? this.verificationStatus,
+        medilinkId: medilinkId ?? this.medilinkId,
       );
 
   static UserRole _parseRole(dynamic r) {
@@ -68,7 +83,7 @@ class UserModel {
       return UserRole.doctor;
     } else if (role.contains('pharmacy')) {
       return UserRole.pharmacy;
-    } else if (role.contains('labs') || role.contains('scans')) {
+    } else if (role.contains('lab') || role.contains('scans') || role.contains('radiology')) {
       return UserRole.labs;
     } else {
       return UserRole.patient;

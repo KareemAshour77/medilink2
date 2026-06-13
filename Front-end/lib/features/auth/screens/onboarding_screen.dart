@@ -3,8 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/widgets/theme_toggle_button.dart';
-import '../../../core/widgets/lang_toggle_button.dart';
 import '../../auth/screens/welcome_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -73,17 +71,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: const [
-                  LangToggleButton(),
-                  SizedBox(width: 8),
-                  ThemeToggleButton(),
-                ],
-              ),
-            ),
             Expanded(
               child: PageView.builder(
                 controller: _controller,

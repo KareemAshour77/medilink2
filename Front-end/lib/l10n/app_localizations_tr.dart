@@ -375,6 +375,12 @@ class AppLocalizationsTr extends AppLocalizations {
   String get nearBy => 'Yakınındakiler';
 
   @override
+  String get refreshLocation => 'Konumu yenile';
+
+  @override
+  String get clinicLocation => 'Klinik konumu';
+
+  @override
   String get myProfile => 'Profilim';
 
   @override

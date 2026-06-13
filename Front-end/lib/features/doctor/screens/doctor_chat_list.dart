@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/services/chat_api_service.dart';
+import '../../../core/services/chat_service.dart';
 import '../../../core/services/api_service.dart';
+import '../../../core/services/session_service.dart';
 import 'doctor_chat_screen.dart';
 
 // ── Conversation data from API ────────────────────────────────────────────────
@@ -12,6 +15,7 @@ class _Conv {
   final String? otherImageUrl;
   final String? lastMessage;
   final DateTime? lastMessageAt;
+  final int unreadCount;
 
   const _Conv({
     required this.id,
@@ -20,6 +24,7 @@ class _Conv {
     this.otherImageUrl,
     this.lastMessage,
     this.lastMessageAt,
+    this.unreadCount = 0,
   });
 
   String get initials {
@@ -47,6 +52,21 @@ class _Conv {
     return '${lastMessageAt!.day}/${lastMessageAt!.month}';
   }
 
+  _Conv copyWith({
+    String? lastMessage,
+    DateTime? lastMessageAt,
+    int? unreadCount,
+  }) =>
+      _Conv(
+        id: id,
+        otherId: otherId,
+        otherName: otherName,
+        otherImageUrl: otherImageUrl,
+        lastMessage: lastMessage ?? this.lastMessage,
+        lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+        unreadCount: unreadCount ?? this.unreadCount,
+      );
+
   factory _Conv.fromJson(Map<String, dynamic> j) {
     final other = j['other'] as Map<String, dynamic>? ?? {};
     final imgPath = other['image'] as String?;
@@ -54,11 +74,13 @@ class _Conv {
       id: j['id'] as String? ?? '',
       otherId: other['id'] as String? ?? '',
       otherName: other['name'] as String? ?? 'Patient',
-      otherImageUrl: imgPath != null ? '${ApiService.baseUrl}/$imgPath' : null,
+      otherImageUrl:
+          imgPath != null ? '${ApiService.baseUrl}/$imgPath' : null,
       lastMessage: j['lastMessage'] as String?,
       lastMessageAt: j['lastMessageAt'] != null
           ? DateTime.tryParse(j['lastMessageAt'].toString())
           : null,
+      unreadCount: j['unreadCount'] as int? ?? 0,
     );
   }
 }
@@ -80,16 +102,49 @@ class _DoctorChatListState extends State<DoctorChatList> {
   void initState() {
     super.initState();
     _loadConversations();
+    ChatService.instance.onConvUpdated(_onConvUpdated);
   }
 
   @override
   void dispose() {
     _search.dispose();
+    ChatService.instance.offAll();
     super.dispose();
   }
 
+  void _onConvUpdated(Map<String, dynamic> data) {
+    if (!mounted) return;
+    final convId      = data['conversationId'] as String?;
+    final lastMessage = data['lastMessage'] as String?;
+    final senderId    = data['senderId'] as String?;
+    final lastMsgAt   = data['lastMessageAt'] != null
+        ? DateTime.tryParse(data['lastMessageAt'].toString())
+        : null;
+
+    setState(() {
+      final i = _convs.indexWhere((c) => c.id == convId);
+      if (i < 0) {
+        // Brand-new conversation — full reload
+        _loadConversations();
+        return;
+      }
+      final myId   = SessionService.currentUser?.id ?? '';
+      final isFromOther = senderId != myId;
+      final updated = _convs[i].copyWith(
+        lastMessage:   lastMessage,
+        lastMessageAt: lastMsgAt,
+        unreadCount: isFromOther ? _convs[i].unreadCount + 1 : _convs[i].unreadCount,
+      );
+      _convs.removeAt(i);
+      _convs.insert(0, updated); // bump to top
+    });
+  }
+
   Future<void> _loadConversations() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final raw = await ChatApiService.getConversations();
       if (!mounted) return;
@@ -99,7 +154,10 @@ class _DoctorChatListState extends State<DoctorChatList> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() { _error = 'Could not load conversations.'; _loading = false; });
+      setState(() {
+        _error = 'Could not load conversations.';
+        _loading = false;
+      });
     }
   }
 
@@ -109,6 +167,50 @@ class _DoctorChatListState extends State<DoctorChatList> {
     return _convs.where((c) => c.otherName.toLowerCase().contains(q)).toList();
   }
 
+  Future<bool> _confirmDeleteConv(String name) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Remove chat?'),
+        content: Text('This deletes your conversation with $name and its messages.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
+  Future<void> _deleteConv(_Conv c) async {
+    final idx = _convs.indexOf(c);
+    setState(() => _convs.remove(c));
+    try {
+      await ChatApiService.deleteConversation(c.id);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _convs.insert(idx < 0 ? 0 : idx, c));
+      final msg = e.toString().replaceFirst('Exception: ', '');
+      AppSnackBar.show(context, 'Delete failed: $msg');
+    }
+  }
+
+  Widget _swipeBg(Alignment align) => Container(
+        alignment: align,
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        decoration: BoxDecoration(
+          color: Colors.red,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.delete_outline_rounded, color: Colors.white),
+      );
+
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
@@ -117,12 +219,14 @@ class _DoctorChatListState extends State<DoctorChatList> {
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Messages',
-                style: TextStyle(
-                    color: context.text,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5)),
+            Text(
+              'Messages',
+              style: TextStyle(
+                  color: context.text,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5),
+            ),
             const SizedBox(height: 4),
             Text(
               _loading
@@ -142,7 +246,8 @@ class _DoctorChatListState extends State<DoctorChatList> {
                 onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
                   hintText: 'Search messages…',
-                  prefixIcon: Icon(Icons.search_rounded, color: AppColors.grey, size: 20),
+                  prefixIcon: Icon(Icons.search_rounded,
+                      color: AppColors.grey, size: 20),
                   border: InputBorder.none,
                   contentPadding: EdgeInsets.symmetric(vertical: 14),
                 ),
@@ -165,7 +270,8 @@ class _DoctorChatListState extends State<DoctorChatList> {
           const SizedBox(height: 12),
           Text(_error!, style: const TextStyle(color: AppColors.grey)),
           const SizedBox(height: 16),
-          TextButton(onPressed: _loadConversations, child: const Text('Retry')),
+          TextButton(
+              onPressed: _loadConversations, child: const Text('Retry')),
         ]),
       );
     }
@@ -173,14 +279,17 @@ class _DoctorChatListState extends State<DoctorChatList> {
     if (_convs.isEmpty) {
       return Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.chat_bubble_outline_rounded, size: 56, color: AppColors.grey),
+          const Icon(Icons.chat_bubble_outline_rounded,
+              size: 56, color: AppColors.grey),
           const SizedBox(height: 12),
           const Text('No conversations yet.',
               style: TextStyle(color: AppColors.grey, fontSize: 15)),
           const SizedBox(height: 6),
-          const Text('Patients will appear here once they start a chat.',
-              style: TextStyle(color: AppColors.grey, fontSize: 12),
-              textAlign: TextAlign.center),
+          const Text(
+            'Patients will appear here once they start a chat.',
+            style: TextStyle(color: AppColors.grey, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
         ]),
       );
     }
@@ -199,25 +308,42 @@ class _DoctorChatListState extends State<DoctorChatList> {
         itemCount: filtered.length,
         separatorBuilder: (_, __) =>
             Divider(height: 1, color: context.divider.withOpacity(0.5)),
-        itemBuilder: (_, i) => _ConvTile(
-          conv: filtered[i],
-          index: i,
-          onTap: () async {
-            await Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => DoctorChatScreen(
-                  conversationId: filtered[i].id,
-                  patientId: filtered[i].otherId,
-                  patientName: filtered[i].otherName,
-                  patientImageUrl: filtered[i].otherImageUrl,
-                ),
-              ),
-            );
-            // Refresh on return so last message updates
-            _loadConversations();
-          },
-        ),
+        itemBuilder: (_, i) {
+          final c = filtered[i];
+          return Dismissible(
+            key: ValueKey(c.id),
+            direction: DismissDirection.horizontal,
+            background: _swipeBg(Alignment.centerLeft),
+            secondaryBackground: _swipeBg(Alignment.centerRight),
+            confirmDismiss: (_) => _confirmDeleteConv(c.otherName),
+            onDismissed: (_) => _deleteConv(c),
+            child: _ConvTile(
+              conv: c,
+              index: i,
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DoctorChatScreen(
+                      conversationId: c.id,
+                      patientId: c.otherId,
+                      patientName: c.otherName,
+                      patientImageUrl: c.otherImageUrl,
+                    ),
+                  ),
+                );
+                // Clear unread badge for this conversation after returning
+                setState(() {
+                  final idx = _convs.indexWhere((x) => x.id == c.id);
+                  if (idx >= 0) {
+                    _convs[idx] = _convs[idx].copyWith(unreadCount: 0);
+                  }
+                });
+                ChatService.instance.onConvUpdated(_onConvUpdated);
+              },
+            ),
+          );
+        },
       ),
     );
   }
@@ -228,7 +354,8 @@ class _ConvTile extends StatefulWidget {
   final _Conv conv;
   final int index;
   final VoidCallback onTap;
-  const _ConvTile({required this.conv, required this.index, required this.onTap});
+  const _ConvTile(
+      {required this.conv, required this.index, required this.onTap});
   @override
   State<_ConvTile> createState() => _ConvTileState();
 }
@@ -250,16 +377,24 @@ class _ConvTileState extends State<_ConvTile>
   }
 
   @override
-  void dispose() { _ac.dispose(); super.dispose(); }
+  void dispose() {
+    _ac.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = widget.conv;
+    final hasUnread = c.unreadCount > 0;
+
     return FadeTransition(
       opacity: _fade,
       child: GestureDetector(
         onTapDown: (_) => setState(() => _scale = 0.97),
-        onTapUp: (_) { setState(() => _scale = 1); widget.onTap(); },
+        onTapUp: (_) {
+          setState(() => _scale = 1);
+          widget.onTap();
+        },
         onTapCancel: () => setState(() => _scale = 1),
         child: AnimatedScale(
           scale: _scale,
@@ -267,7 +402,7 @@ class _ConvTileState extends State<_ConvTile>
           child: Container(
             color: Colors.transparent,
             padding: const EdgeInsets.symmetric(vertical: 14),
-            child: Row(children: [
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               CircleAvatar(
                 radius: 26,
                 backgroundColor: RoleTheme.doctor.withOpacity(0.13),
@@ -275,39 +410,90 @@ class _ConvTileState extends State<_ConvTile>
                     ? NetworkImage(c.otherImageUrl!)
                     : null,
                 child: c.otherImageUrl == null
-                    ? Text(c.initials,
+                    ? Text(
+                        c.initials,
                         style: const TextStyle(
                             color: RoleTheme.doctor,
                             fontWeight: FontWeight.w700,
-                            fontSize: 14))
+                            fontSize: 14),
+                      )
                     : null,
               ),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(c.otherName,
-                          style: TextStyle(
-                              color: context.text,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14)),
-                      const SizedBox(height: 3),
-                      Text(
-                        c.lastMessage ?? 'Tap to open conversation',
-                        style: TextStyle(
-                            color: c.lastMessage != null
-                                ? context.text.withOpacity(0.65)
-                                : AppColors.grey,
-                            fontSize: 12),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      c.otherName,
+                      style: TextStyle(
+                        color: context.text,
+                        fontWeight:
+                            hasUnread ? FontWeight.w700 : FontWeight.w600,
+                        fontSize: 14,
                       ),
-                    ]),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      c.lastMessage ?? 'Tap to open conversation',
+                      style: TextStyle(
+                        color: hasUnread
+                            ? context.text.withOpacity(0.85)
+                            : c.lastMessage != null
+                                ? context.text.withOpacity(0.55)
+                                : AppColors.grey,
+                        fontSize: 12,
+                        fontWeight:
+                            hasUnread ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 10),
-              Text(c.timeLabel,
-                  style: const TextStyle(color: AppColors.grey, fontSize: 11)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    c.timeLabel,
+                    style: TextStyle(
+                      color:
+                          hasUnread ? RoleTheme.doctor : AppColors.grey,
+                      fontSize: 11,
+                      fontWeight: hasUnread
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  if (hasUnread)
+                    Container(
+                      constraints: const BoxConstraints(minWidth: 20),
+                      height: 20,
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      decoration: BoxDecoration(
+                        color: RoleTheme.doctor,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        c.unreadCount > 99
+                            ? '99+'
+                            : c.unreadCount.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
+                  else
+                    const SizedBox(height: 20),
+                ],
+              ),
             ]),
           ),
         ),

@@ -460,24 +460,27 @@ class _NotificationItem extends StatelessWidget {
   IconData get _icon {
     return switch (notification.type) {
       InAppNotificationType.medication => Icons.medication_outlined,
-      InAppNotificationType.doctor => Icons.local_hospital_outlined,
-      InAppNotificationType.general => Icons.info_outline,
+      InAppNotificationType.doctor     => Icons.local_hospital_outlined,
+      InAppNotificationType.general    => Icons.info_outline,
+      InAppNotificationType.chat       => Icons.chat_bubble_outline_rounded,
     };
   }
 
   Color get _iconColor {
     return switch (notification.type) {
-      InAppNotificationType.medication => const Color(0xFF00897B), // teal
-      InAppNotificationType.doctor => const Color(0xFF1565C0), // blue
-      InAppNotificationType.general => const Color(0xFF6D4C41), // brown
+      InAppNotificationType.medication => const Color(0xFF00897B),
+      InAppNotificationType.doctor     => const Color(0xFF1565C0),
+      InAppNotificationType.general    => const Color(0xFF6D4C41),
+      InAppNotificationType.chat       => const Color(0xFF1976D2),
     };
   }
 
   Color get _iconBg {
     return switch (notification.type) {
       InAppNotificationType.medication => const Color(0xFFE0F2F1),
-      InAppNotificationType.doctor => const Color(0xFFE3F2FD),
-      InAppNotificationType.general => const Color(0xFFEFEBE9),
+      InAppNotificationType.doctor     => const Color(0xFFE3F2FD),
+      InAppNotificationType.general    => const Color(0xFFEFEBE9),
+      InAppNotificationType.chat       => const Color(0xFFE3F2FD),
     };
   }
 
@@ -539,6 +542,18 @@ class _NotificationItem extends StatelessWidget {
                             color: Color(0xFF0D1B2A),
                           ),
                         ),
+                        if (notification.specialty != null &&
+                            notification.specialty!.isNotEmpty) ...[
+                          const SizedBox(height: 1),
+                          Text(
+                            notification.specialty!,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF1976D2),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 2),
                         Text(
                           notification.description,

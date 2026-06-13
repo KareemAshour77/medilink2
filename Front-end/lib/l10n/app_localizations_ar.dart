@@ -375,6 +375,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get nearBy => 'بالقرب منك';
 
   @override
+  String get refreshLocation => 'تحديث الموقع';
+
+  @override
+  String get clinicLocation => 'موقع العيادة';
+
+  @override
   String get myProfile => 'ملفي الشخصي';
 
   @override

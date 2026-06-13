@@ -825,6 +825,18 @@ abstract class AppLocalizations {
   /// **'Near By'**
   String get nearBy;
 
+  /// No description provided for @refreshLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh location'**
+  String get refreshLocation;
+
+  /// No description provided for @clinicLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Clinic location'**
+  String get clinicLocation;
+
   /// No description provided for @myProfile.
   ///
   /// In en, this message translates to:

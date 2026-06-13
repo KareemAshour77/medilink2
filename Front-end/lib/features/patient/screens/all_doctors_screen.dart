@@ -3,6 +3,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/name_format.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/location_service.dart';
 import 'doctor_details_screen.dart';
@@ -235,7 +236,7 @@ class _DoctorCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(doctor.name,
+                Text(drName(doctor.name),
                     style: TextStyle(
                         color: context.text,
                         fontWeight: FontWeight.w600,

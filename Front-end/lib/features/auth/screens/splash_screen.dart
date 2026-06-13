@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:medilink/core/theme/app_theme.dart';
-import '../screens/onboarding_screen.dart';
-import 'package:medilink/core/services/session_service.dart';
-import 'package:medilink/core/router.dart';
+import '../screens/language_setup_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -11,28 +9,38 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
-  late final Animation<double> _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  // Logo: scale up gently while fading in.
+  late final Animation<double> _logoScale = Tween<double>(
+    begin: 0.85,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
+  late final Animation<double> _logoFade = CurvedAnimation(
+    parent: _ctrl,
+    curve: const Interval(0.0, 0.6, curve: Curves.easeIn),
+  );
+  // Loader fades in once the logo has settled.
+  late final Animation<double> _loaderFade = CurvedAnimation(
+    parent: _ctrl,
+    curve: const Interval(0.6, 1.0, curve: Curves.easeIn),
+  );
 
   @override
   void initState() {
     super.initState();
     _ctrl.forward();
-    Future.delayed(const Duration(milliseconds: 2200), () {
+    Future.delayed(const Duration(milliseconds: 3500), () {
       if (!mounted) return;
-      if (SessionService.isLoggedIn) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const RoleRouter()),
-        );
-      } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
-        );
-      }
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LanguageSetupScreen()),
+      );
     });
   }
 
@@ -44,30 +52,44 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
+    // White to stay seamless with the white native launch splash.
     return Scaffold(
-      backgroundColor: AppColors.primary,
-      body: FadeTransition(
-        opacity: _fade,
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: 980,
-                height: 320,
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Stack(
+        children: [
+          Center(
+            child: FadeTransition(
+              opacity: _logoFade,
+              child: ScaleTransition(
+                scale: _logoScale,
                 child: Image.asset(
                   'assets/images/logo.png',
+                  width: 180,
+                  fit: BoxFit.contain,
                 ),
               ),
-              Text(
-                'Your Link to Doctors',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 30,
-                ),
-              ),
-            ],
+            ),
           ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 120),
+              child: FadeTransition(
+                opacity: _loaderFade,
+                child: const SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.6,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
         ),
       ),
     );

@@ -130,6 +130,8 @@
 
   "menu": "القائمة",
   "nearBy": "بالقرب منك",
+  "refreshLocation": "تحديث الموقع",
+  "clinicLocation": "موقع العيادة",
   "myProfile": "ملفي الشخصي",
   "notifications": "الإشعارات",
   "helpSupport": "المساعدة والدعم",

@@ -1,56 +1,85 @@
 // ignore_for_file: prefer_const_constructors
 
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
+
 import '../../models/reminder_model.dart' hide Priority;
-import 'dart:async';
-import 'in_app_notification_store.dart';
 import '../models/in_app_notification.dart';
+import 'api_service.dart';
+import 'in_app_notification_store.dart';
 
 // ---------------------------------------------------------------------------
-// Action identifiers — shared between scheduling and handling so they
-// never go out of sync.
+// Background notification response — MUST be a top-level function.
+// flutter_local_notifications registers it as a Dart VM entry point; static
+// methods are not supported for this callback in v14+.
+// Top-level functions in the same file can access library-private members.
+// ---------------------------------------------------------------------------
+@pragma('vm:entry-point')
+void _onBackgroundNotificationResponse(NotificationResponse response) {
+  // Synchronous print fires even if the isolate exits before async work runs.
+  debugPrint('[NOTIF] background ENTRY actionId=${response.actionId} payload=${response.payload}');
+  // Call async helper directly — the returned Future is registered with the
+  // Dart event loop, keeping the isolate alive until the HTTP send completes.
+  _runBackgroundNotificationResponse(response);
+}
+
+// Separate async top-level function so the Future is properly awaited by
+// the Dart event loop rather than being fire-and-forget from a void callback.
+@pragma('vm:entry-point')
+Future<void> _runBackgroundNotificationResponse(NotificationResponse response) async {
+  debugPrint('[NOTIF] background → actionId=${response.actionId} input=${response.input} payload=${response.payload}');
+  final payload = response.payload ?? '';
+  if (!payload.startsWith('chat|')) return;
+
+  // Initialize the plugin in this isolate so _plugin.cancel() works
+  const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+  await NotificationService.plugin.initialize(
+    settings: InitializationSettings(android: android),
+  );
+
+  await NotificationService.handleChatActionPublic(response, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Notification action identifiers
 // ---------------------------------------------------------------------------
 class NotificationActions {
-  /// User confirmed they took the medication.
   static const String taken = 'MEDICATION_TAKEN';
-
-  /// User wants a 10-minute snooze.
   static const String snooze = 'MEDICATION_SNOOZE';
+}
+
+class ChatNotificationActions {
+  static const String reply = 'CHAT_REPLY';
+  static const String markRead = 'CHAT_MARK_READ';
 }
 
 // ---------------------------------------------------------------------------
 // Notification channel identifiers
 // ---------------------------------------------------------------------------
 class _Channels {
-  /// Original channel — kept intact so existing reminders are unaffected.
-  static const String reminders = 'medilink_reminders';
-
-  /// New channel for actionable medication reminders.
-  static const String medication = 'medilink_medication';
+  static const String reminders    = 'medilink_reminders';
+  static const String medication   = 'medilink_medication';
+  static const String chat         = 'medilink_chat';
+  static const String appointments = 'medilink_appointments';
 }
 
-// ---------------------------------------------------------------------------
-// iOS category identifier for medication actionable notifications.
-// ---------------------------------------------------------------------------
 const String _iosMedicationCategory = 'MEDICATION_CATEGORY';
 
 // ---------------------------------------------------------------------------
-// Callback types
+// Callback types — medication
 // ---------------------------------------------------------------------------
-
-/// Called when the user taps "✅ Taken".
-/// [notificationId] is the hashed id used to schedule the notification.
-/// [reminderId]     is the original ReminderModel.id string.
 typedef OnMedicationTaken = Future<void> Function({
   required int notificationId,
   required String reminderId,
 });
 
-/// Called when the user taps "⏰ Snooze".
-/// [payload] carries the original medication info so the notification can
-/// be re-scheduled without hitting the database.
 typedef OnMedicationSnoozed = Future<void> Function({
   required int notificationId,
   required String reminderId,
@@ -59,17 +88,25 @@ typedef OnMedicationSnoozed = Future<void> Function({
 });
 
 // ---------------------------------------------------------------------------
+// In-memory chat message history for MessagingStyle grouping
+// ---------------------------------------------------------------------------
+class _ChatMsg {
+  final String senderName;
+  final String text;
+  final DateTime timestamp;
+  _ChatMsg({required this.senderName, required this.text, required this.timestamp});
+}
+
+// ---------------------------------------------------------------------------
 // NotificationService
 // ---------------------------------------------------------------------------
 class NotificationService {
   static final _plugin = FlutterLocalNotificationsPlugin();
 
-  // ── Registered action callbacks (set once from main / DI layer) ──────────
+  // ── Medication callbacks ─────────────────────────────────────────────────
   static OnMedicationTaken? _onTaken;
   static OnMedicationSnoozed? _onSnoozed;
 
-  /// Register the callbacks that will be invoked when the user interacts with
-  /// an actionable medication notification.  Call this before [init].
   static void registerActionCallbacks({
     required OnMedicationTaken onTaken,
     required OnMedicationSnoozed onSnoozed,
@@ -78,15 +115,46 @@ class NotificationService {
     _onSnoozed = onSnoozed;
   }
 
-  // ── Initialisation ───────────────────────────────────────────────────────
+  // ── Chat callbacks ───────────────────────────────────────────────────────
+  // Reply always uses REST (reliable in both foreground and background).
+  // Mark as Read uses socket in foreground, REST in background.
+  // onChatTap fires when the notification body is tapped in the main isolate
+  // (foreground) so the home screen can navigate without SharedPreferences.
+  static Future<void> Function(String conversationId)? _onChatMarkRead;
+  static void Function(String conversationId)? _onChatTap;
 
+  static void registerChatCallbacks({
+    Future<void> Function(String conversationId)? onMarkRead,
+    void Function(String conversationId)? onChatTap,
+  }) {
+    _onChatMarkRead = onMarkRead;
+    _onChatTap = onChatTap;
+  }
+
+  // ── Appointment tap callback ─────────────────────────────────────────────
+  // Fires when the patient taps an appointment accept/reject local notification.
+  static void Function(bool accepted)? _onAppointmentTap;
+
+  static void registerAppointmentCallback({
+    required void Function(bool accepted) onTap,
+  }) {
+    _onAppointmentTap = onTap;
+  }
+
+  // ── Per-conversation message history for MessagingStyle ──────────────────
+  static final Map<String, List<_ChatMsg>> _convMessages = {};
+  static const int _maxHistory = 5;
+
+  static void clearConvHistory(String conversationId) {
+    _convMessages.remove(conversationId);
+  }
+
+  // ── Initialisation ───────────────────────────────────────────────────────
   static Future<void> init() async {
-    // -- Timezone (existing logic — unchanged) --------------------------------
     tz_data.initializeTimeZones();
     final offset = DateTime.now().timeZoneOffset;
-    final locations = tz.timeZoneDatabase.locations;
     tz.Location? match;
-    for (final loc in locations.values) {
+    for (final loc in tz.timeZoneDatabase.locations.values) {
       if (loc.zones.isNotEmpty &&
           loc.currentTimeZone.offset.inMilliseconds == offset.inMilliseconds) {
         match = loc;
@@ -95,55 +163,83 @@ class NotificationService {
     }
     tz.setLocalLocation(match ?? tz.UTC);
 
-    // -- iOS: register the actionable category for medication -----------------
-    // This must be declared before initialize() is called so iOS knows the
-    // actions up-front.
-    var takenAction = DarwinNotificationAction.plain(
-      NotificationActions.taken,
-      '✅ Taken',
-      options: {DarwinNotificationActionOption.foreground},
-    );
-    var snoozeAction = DarwinNotificationAction.plain(
-      NotificationActions.snooze,
-      '⏰ Snooze',
-      // background — no need to foreground the app just to snooze
-    );
+    // iOS: medication actionable category
     final medicationCategory = DarwinNotificationCategory(
       _iosMedicationCategory,
-      actions: [takenAction, snoozeAction],
+      actions: [
+        DarwinNotificationAction.plain(NotificationActions.taken, '✅ Taken',
+            options: {DarwinNotificationActionOption.foreground}),
+        DarwinNotificationAction.plain(NotificationActions.snooze, '⏰ Snooze'),
+      ],
       options: {DarwinNotificationCategoryOption.hiddenPreviewShowTitle},
     );
 
-    // -- Android / iOS init settings ------------------------------------------
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     final ios = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
-      notificationCategories: [medicationCategory], // ← NEW: register category
+      notificationCategories: [medicationCategory],
     );
 
     await _plugin.initialize(
       settings: InitializationSettings(android: android, iOS: ios),
       onDidReceiveNotificationResponse: _onNotificationResponse,
-      onDidReceiveBackgroundNotificationResponse:
-          _onBackgroundNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse: _onBackgroundNotificationResponse,
     );
 
-    // -- Android permissions (existing logic — unchanged) --------------------
     final androidImpl = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await androidImpl?.requestNotificationsPermission();
     await androidImpl?.requestExactAlarmsPermission();
+
+    // Chat channel — high importance for heads-up display
+    await androidImpl?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _Channels.chat,
+        'MediLink Chat',
+        description: 'Incoming chat messages from doctors and patients',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
+      ),
+    );
+
+    // Appointments channel — accept / reject updates
+    await androidImpl?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _Channels.appointments,
+        'MediLink Appointments',
+        description: 'Appointment accept and reject notifications',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
+      ),
+    );
+
     _startForegroundWatcher();
   }
 
-  // ── Notification response handlers ──────────────────────────────────────
-
-  /// Foreground handler — runs inside the Flutter isolate.
+  // ── Foreground handler ───────────────────────────────────────────────────
   static void _onNotificationResponse(NotificationResponse response) async {
-    final parts = (response.payload ?? '').split('|');
+    debugPrint('[NOTIF] foreground → actionId=${response.actionId} input=${response.input} payload=${response.payload}');
+    final payload = response.payload ?? '';
 
+    if (payload.startsWith('chat|')) {
+      await _handleChatAction(response, payload);
+      return;
+    }
+
+    if (payload.startsWith('appointment|')) {
+      final accepted = payload.split('|')[1] == 'accepted';
+      _onAppointmentTap?.call(accepted);
+      return;
+    }
+
+    // Medication / reminder path (unchanged)
+    final parts = (response.payload ?? '').split('|');
     final reminderId = parts.isNotEmpty ? parts[0] : '';
     final medicationName = parts.length > 1 ? parts[1] : 'Medication';
     final doseStr = parts.length > 2 ? parts[2] : '1';
@@ -159,62 +255,246 @@ class NotificationService {
         doseStr: doseStr,
       ),
     );
-
     await handleNotificationAction(response);
   }
 
-  /// Background / terminated handler — must be a top-level function.
-  /// We forward to the same logic; callbacks must be re-registered if the
-  /// app wakes cold from a background tap (handle in main()).
-  @pragma('vm:entry-point')
-  static void _onBackgroundNotificationResponse(NotificationResponse response) {
-    handleNotificationAction(response);
+
+  // ── Chat action dispatcher ───────────────────────────────────────────────
+
+  // Public entry point used by the top-level background handler (same file,
+  // but background isolate cannot call private members by class name).
+  static Future<void> handleChatActionPublic(
+    NotificationResponse response,
+    String payload,
+  ) => _handleChatAction(response, payload);
+
+  static Future<void> _handleChatAction(
+    NotificationResponse response,
+    String payload,
+  ) async {
+    final parts = payload.split('|');
+    final conversationId = parts.length > 1 ? parts[1] : '';
+    debugPrint('[NOTIF] _handleChatAction → convId=$conversationId actionId=${response.actionId} input=${response.input}');
+    if (conversationId.isEmpty) return;
+
+    switch (response.actionId) {
+      case ChatNotificationActions.reply:
+        final text = response.input?.trim() ?? '';
+        debugPrint('[NOTIF] reply text="$text"');
+        if (text.isEmpty) return;
+        // Always use REST — reliable in both foreground and background:
+        // • no socket connection needed
+        // • backend emits new_message + conv_updated via socket to recipient
+        await _restSendMessage(conversationId, text);
+        // Dismiss the notification — clears Android "Sending…" spinner
+        try { await _plugin.cancel(id: conversationId.hashCode); } catch (_) {}
+        clearConvHistory(conversationId);
+        break;
+
+      case ChatNotificationActions.markRead:
+        if (_onChatMarkRead != null) {
+          await _onChatMarkRead!(conversationId);
+        } else {
+          await _restMarkRead(conversationId);
+        }
+        try { await _plugin.cancel(id: conversationId.hashCode); } catch (_) {}
+        clearConvHistory(conversationId);
+        break;
+
+      // null actionId = user tapped the notification body (not an action button).
+      // Foreground (main isolate): _onChatTap callback is registered — call it
+      //   directly so the home screen can navigate without SharedPreferences.
+      // Background isolate: callback is null — write to SharedPreferences so
+      //   the home screen's resume observer picks it up when the app re-focuses.
+      default:
+        if (response.actionId == null) {
+          if (_onChatTap != null) {
+            _onChatTap!(conversationId);
+          } else {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('pending_chat_nav', conversationId);
+          }
+        }
+    }
   }
 
-  // ── Public: handle an action ─────────────────────────────────────────────
+  // ── REST helpers for background actions ──────────────────────────────────
 
-  /// Dispatches a [NotificationResponse] to the appropriate callback.
-  ///
-  /// The [payload] is expected to be a pipe-separated string:
-  ///   "`reminderId|medicationName|doseStr`"
-  ///
-  /// This method is intentionally public so it can be called from:
-  ///   • The plugin callbacks above.
-  ///   • The in-app notification list UI (bell button widget).
-  static Future<void> handleNotificationAction(
-    NotificationResponse response,
-  ) async {
+  static Future<String?> _getAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('access_token');
+  }
+
+  static Future<void> _restSendMessage(String conversationId, String text) async {
+    final token = await _getAuthToken();
+    debugPrint('[NOTIF] _restSendMessage → token=${token != null ? "found" : "NULL"} conv=$conversationId');
+    if (token == null) return;
+    try {
+      final res = await http.post(
+        Uri.parse('${ApiService.baseUrl}/chat/conversation/$conversationId/message'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'content': text}),
+      ).timeout(const Duration(seconds: 10));
+      debugPrint('[NOTIF] _restSendMessage → status=${res.statusCode} body=${res.body}');
+    } catch (e) {
+      debugPrint('[NOTIF] _restSendMessage → ERROR: $e');
+    }
+  }
+
+  static Future<void> _restMarkRead(String conversationId) async {
+    final token = await _getAuthToken();
+    if (token == null) return;
+    try {
+      await http.put(
+        Uri.parse('${ApiService.baseUrl}/chat/conversation/$conversationId/read'),
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 10));
+    } catch (_) {}
+  }
+
+  // ── Chat notification — MessagingStyle with avatar + actions ─────────────
+
+  static Future<void> showChatMessage({
+    required String senderName,
+    required String body,
+    required String conversationId,
+    required String messageId,
+    String messageType = 'text',
+    Uint8List? senderImageBytes,
+  }) async {
+    // Accumulate history for MessagingStyle grouping
+    final history = _convMessages.putIfAbsent(conversationId, () => []);
+    history.add(_ChatMsg(
+      senderName: senderName,
+      text: body,
+      timestamp: DateTime.now(),
+    ));
+    if (history.length > _maxHistory) history.removeAt(0);
+
+    // Build MessagingStyle
+    final senderPerson = Person(name: senderName, key: conversationId);
+    final styleMessages = history
+        .map((m) => Message(m.text, m.timestamp, senderPerson))
+        .toList();
+
+    late final AndroidBitmap<Object> largeIcon;
+    if (senderImageBytes != null) {
+      largeIcon = ByteArrayAndroidBitmap(senderImageBytes);
+    } else {
+      largeIcon = const DrawableResourceAndroidBitmap('@mipmap/ic_launcher');
+    }
+
+    await _plugin.show(
+      // Same id per conversation so messages update (group) instead of stacking
+      id: conversationId.hashCode,
+      title: senderName,
+      body: body,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          _Channels.chat,
+          'MediLink Chat',
+          channelDescription: 'Incoming chat messages',
+          importance: Importance.max,
+          priority: Priority.high,
+          category: AndroidNotificationCategory.message,
+          playSound: true,
+          enableVibration: true,
+          largeIcon: largeIcon,
+          styleInformation: MessagingStyleInformation(
+            // "You" represents the receiver (the notification reader)
+            const Person(name: 'You', key: 'me'),
+            conversationTitle: senderName,
+            groupConversation: false,
+            messages: styleMessages,
+          ),
+          actions: [
+            AndroidNotificationAction(
+              ChatNotificationActions.reply,
+              '💬 Reply',
+              inputs: [const AndroidNotificationActionInput(
+                label: 'Type a reply...',
+              )],
+              showsUserInterface: false,
+              cancelNotification: false,
+            ),
+            AndroidNotificationAction(
+              ChatNotificationActions.markRead,
+              '✓ Mark as Read',
+              showsUserInterface: false,
+              cancelNotification: true,
+            ),
+          ],
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: 'chat|$conversationId|$messageId',
+    );
+  }
+
+  // ── Appointment accept / reject notification ─────────────────────────────
+
+  static Future<void> showAppointmentUpdate({
+    required bool accepted,
+    required String doctorName,
+    required String appointmentType,
+  }) async {
+    final title = accepted ? '✅ Appointment Accepted' : '❌ Appointment Rejected';
+    final body = accepted
+        ? '$doctorName accepted your $appointmentType request. You can now chat with them.'
+        : '$doctorName declined your $appointmentType request.';
+
+    await _plugin.show(
+      id: 'appointment'.hashCode,
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(
+        android: AndroidNotificationDetails(
+          _Channels.appointments,
+          'MediLink Appointments',
+          channelDescription: 'Appointment accept and reject updates',
+          importance: Importance.high,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: 'appointment|${accepted ? 'accepted' : 'rejected'}',
+    );
+  }
+
+  // ── Medication public API (unchanged) ────────────────────────────────────
+
+  static Future<void> handleNotificationAction(NotificationResponse response) async {
     final actionId = response.actionId;
     final notificationId = response.id ?? 0;
-
-    // Parse the structured payload
     final parts = (response.payload ?? '||').split('|');
     final reminderId = parts.isNotEmpty ? parts[0] : '';
     final medicationName = parts.length > 1 ? parts[1] : 'Medication';
     final doseStr = parts.length > 2 ? parts[2] : '1';
 
     if (actionId == NotificationActions.taken) {
-      // 1️⃣  Cancel the scheduled notification — the user has taken their dose.
       await _plugin.cancel(id: notificationId);
-
-      // 2️⃣  Notify the app layer (update DB, show toast, etc.)
-      await _onTaken?.call(
-        notificationId: notificationId,
-        reminderId: reminderId,
-      );
+      await _onTaken?.call(notificationId: notificationId, reminderId: reminderId);
     } else if (actionId == NotificationActions.snooze) {
-      // 1️⃣  Cancel the current notification.
       await _plugin.cancel(id: notificationId);
-
-      // 2️⃣  Schedule a one-off notification 10 minutes from now.
       await _scheduleSnooze(
         notificationId: notificationId,
         reminderId: reminderId,
         medicationName: medicationName,
         doseStr: doseStr,
       );
-
-      // 3️⃣  Notify the app layer.
       await _onSnoozed?.call(
         notificationId: notificationId,
         reminderId: reminderId,
@@ -222,23 +502,15 @@ class NotificationService {
         doseStr: doseStr,
       );
     }
-    // If actionId is null the user tapped the notification body — handle
-    // navigation in your router/navigator using response.payload.
   }
 
-  // ── Schedule helpers ─────────────────────────────────────────────────────
-
-  /// Schedules a one-off snooze notification 10 minutes from now.
   static Future<void> _scheduleSnooze({
     required int notificationId,
     required String reminderId,
     required String medicationName,
     required String doseStr,
   }) async {
-    final snoozeTime = tz.TZDateTime.now(tz.local).add(
-      const Duration(minutes: 10),
-    );
-
+    final snoozeTime = tz.TZDateTime.now(tz.local).add(const Duration(minutes: 10));
     await _plugin.zonedSchedule(
       id: notificationId,
       title: '⏰ Snoozed Reminder',
@@ -250,19 +522,10 @@ class NotificationService {
         doseStr: doseStr,
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      // No matchDateTimeComponents — this is a one-off, not recurring
       payload: '$reminderId|$medicationName|$doseStr|${snoozeTime.millisecondsSinceEpoch}',
     );
   }
 
-  // ── Public: schedule a medication notification ───────────────────────────
-
-  /// Schedules a recurring daily medication notification with ✅ Taken
-  /// and ⏰ Snooze action buttons.
-  ///
-  /// This is a new public method that sits alongside the existing [schedule]
-  /// method.  Use it for medication-type reminders; use [schedule] for
-  /// everything else (doctor appointments, etc.).
   static Future<void> scheduleMedicationNotification({
     required String reminderId,
     required String medicationName,
@@ -270,27 +533,17 @@ class NotificationService {
     required DateTime time,
   }) async {
     final now = tz.TZDateTime.now(tz.local);
-    var scheduled = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      time.hour,
-      time.minute,
-    );
-
+    var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day,
+        time.hour, time.minute);
     if (scheduled.isBefore(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
-
-    // Build a human-readable dose string (e.g. "2" instead of "2.0")
     final doseStr = dose == dose.truncateToDouble()
         ? dose.toInt().toString()
         : dose.toString();
-
     final notificationId = reminderId.hashCode;
-    final payload = '$reminderId|$medicationName|$doseStr|${scheduled.millisecondsSinceEpoch}';
-
+    final payload =
+        '$reminderId|$medicationName|$doseStr|${scheduled.millisecondsSinceEpoch}';
     await _plugin.zonedSchedule(
       id: notificationId,
       title: '💊 Time to take your medication',
@@ -302,15 +555,11 @@ class NotificationService {
         doseStr: doseStr,
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time, // repeat daily
+      matchDateTimeComponents: DateTimeComponents.time,
       payload: payload,
     );
   }
 
-  // ── Private: build NotificationDetails with action buttons ───────────────
-
-  /// Constructs [NotificationDetails] for a medication reminder.
-  /// Includes the two action buttons on both Android and iOS.
   static NotificationDetails _buildMedicationDetails({
     required String reminderId,
     required String medicationName,
@@ -320,112 +569,39 @@ class NotificationService {
       android: AndroidNotificationDetails(
         _Channels.medication,
         'MediLink Medication Reminders',
-        channelDescription:
-            'Actionable medication reminders with Taken / Snooze',
+        channelDescription: 'Actionable medication reminders with Taken / Snooze',
         importance: Importance.max,
         priority: Priority.high,
         playSound: true,
         enableVibration: true,
-        // ── Action buttons ─────────────────────────────────────────────────
         actions: [
-          AndroidNotificationAction(
-            NotificationActions.taken,
-            '✅ Taken',
-            showsUserInterface: false, // handle silently in background
-            cancelNotification: true, // auto-dismiss on tap
-          ),
-          AndroidNotificationAction(
-            NotificationActions.snooze,
-            '⏰ Snooze',
-            showsUserInterface: false,
-            cancelNotification: true,
-          ),
+          AndroidNotificationAction(NotificationActions.taken, '✅ Taken',
+              showsUserInterface: false, cancelNotification: true),
+          AndroidNotificationAction(NotificationActions.snooze, '⏰ Snooze',
+              showsUserInterface: false, cancelNotification: true),
         ],
       ),
       iOS: DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
-        categoryIdentifier:
-            _iosMedicationCategory, // ← links to registered actions
+        categoryIdentifier: _iosMedicationCategory,
       ),
     );
   }
 
-  static void _startForegroundWatcher() {
-    _foregroundWatcher?.cancel();
-
-    _foregroundWatcher = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) async {
-        final pending = await _plugin.pendingNotificationRequests();
-
-        for (final p in pending) {
-          final parts = (p.payload ?? '').split('|');
-
-          if (parts.length < 3) continue;
-
-          final reminderId = parts[0];
-          final medicationName = parts[1];
-          final doseStr = parts[2];
-          final scheduledMs = parts.length > 3 ? int.tryParse(parts[3]) : null;
-
-          // Skip if the scheduled time hasn't arrived yet
-          if (scheduledMs != null &&
-              DateTime.now().millisecondsSinceEpoch < scheduledMs) {
-            continue;
-          }
-
-          final alreadyExists = InAppNotificationStore.instance.items.any(
-            (e) => e.id == reminderId,
-          );
-
-          if (alreadyExists) continue;
-
-          InAppNotificationStore.instance.add(
-            InAppNotification(
-              id: reminderId,
-              title: 'Medicine Time',
-              description: '$medicationName • $doseStr dose',
-              time: DateTime.now(),
-              type: InAppNotificationType.medication,
-              medicationName: medicationName,
-              doseStr: doseStr,
-            ),
-          );
-        }
-      },
-    );
-  }
-
-  // ── Existing public API — UNCHANGED ──────────────────────────────────────
-
-  /// Schedules a recurring daily reminder (doctor or medicine) without
-  /// action buttons.  Preserved exactly as it was.
   static Future<void> schedule(ReminderModel r) async {
     final now = tz.TZDateTime.now(tz.local);
-
-    var scheduled = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      r.time.hour,
-      r.time.minute,
-    );
-
+    var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day,
+        r.time.hour, r.time.minute);
     if (scheduled.isBefore(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
     }
-
-    final title = r.type == ReminderType.doctor
-        ? '🩺 Doctor Appointment'
-        : '💊 Medicine Time';
-
+    final title =
+        r.type == ReminderType.doctor ? '🩺 Doctor Appointment' : '💊 Medicine Time';
     final doseStr = r.dose == r.dose.truncateToDouble()
         ? r.dose.toInt().toString()
         : r.dose.toString();
-
     await _plugin.zonedSchedule(
       id: r.id.hashCode,
       title: title,
@@ -452,15 +628,114 @@ class NotificationService {
     );
   }
 
-  /// Cancels a scheduled notification by its original string id.
-  static Future<void> cancel(String id) async {
-    await _plugin.cancel(id: id.hashCode);
+  static Future<void> cancel(String id) async => _plugin.cancel(id: id.hashCode);
+
+  static Future<void> cancelAll() async => _plugin.cancelAll();
+
+  // ── Multi-slot scheduling (one alarm per dose-time) ──────────────────────────
+  // Distinct, stable notification id per (reminder, slot).
+  static int _slotId(String reminderId, int index) =>
+      '$reminderId#$index'.hashCode;
+
+  // Schedule one daily alarm for each dose-time slot of a medicine reminder.
+  static Future<void> scheduleReminderAllSlots(ReminderModel r) async {
+    final doseStr = r.dose == r.dose.truncateToDouble()
+        ? r.dose.toInt().toString()
+        : r.dose.toString();
+    for (var i = 0; i < r.doseTimes.length; i++) {
+      final slot = r.doseTimes[i];
+      final now = tz.TZDateTime.now(tz.local);
+      var scheduled = tz.TZDateTime(
+          tz.local, now.year, now.month, now.day, slot.time.hour, slot.time.minute);
+      if (scheduled.isBefore(now)) {
+        scheduled = scheduled.add(const Duration(days: 1));
+      }
+      final payload =
+          '${r.id}|${r.name}|$doseStr|${scheduled.millisecondsSinceEpoch}';
+      try {
+        await _plugin.zonedSchedule(
+          id: _slotId(r.id, i),
+          title: '💊 Time to take your medication',
+          body: '${r.name}  •  $doseStr dose  •  ${slot.meal.label}',
+          scheduledDate: scheduled,
+          notificationDetails: _buildMedicationDetails(
+            reminderId: r.id,
+            medicationName: r.name,
+            doseStr: doseStr,
+          ),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          matchDateTimeComponents: DateTimeComponents.time,
+          payload: payload,
+        );
+      } catch (_) {
+        // best-effort per slot
+      }
+    }
   }
 
-  /// Cancels all pending notifications (useful on sign-out / account wipe).
-  static Future<void> cancelAll() async {
-    await _plugin.cancelAll();
+  // Cancel every slot alarm for a reminder (plus the legacy single id).
+  static Future<void> cancelReminderAllSlots(ReminderModel r) async {
+    try {
+      await _plugin.cancel(id: r.id.hashCode);
+    } catch (_) {}
+    // Cancel a generous range in case the slot count shrank since scheduling.
+    final count = r.doseTimes.length < 12 ? 12 : r.doseTimes.length;
+    for (var i = 0; i < count; i++) {
+      try {
+        await _plugin.cancel(id: _slotId(r.id, i));
+      } catch (_) {}
+    }
   }
 
+  // Re-schedules the given reminders (the current account's own reminders).
+  // Called after login so that cancelAll() on logout/account-switch doesn't
+  // leave a returning user with no scheduled reminders. Scheduling by the same
+  // id replaces any existing one, so this is safe to call repeatedly.
+  static Future<void> rescheduleAll(List<ReminderModel> reminders) async {
+    for (final r in reminders) {
+      try {
+        if (r.type == ReminderType.medicine) {
+          await scheduleReminderAllSlots(r);
+        } else {
+          await schedule(r);
+        }
+      } catch (_) {
+        // best-effort — one bad reminder shouldn't block the rest
+      }
+    }
+  }
+
+  // ── Foreground reminder watcher (unchanged) ──────────────────────────────
   static Timer? _foregroundWatcher;
+
+  static void _startForegroundWatcher() {
+    _foregroundWatcher?.cancel();
+    _foregroundWatcher = Timer.periodic(const Duration(seconds: 5), (_) async {
+      final pending = await _plugin.pendingNotificationRequests();
+      for (final p in pending) {
+        final parts = (p.payload ?? '').split('|');
+        if (parts.length < 3) continue;
+        final reminderId = parts[0];
+        final medicationName = parts[1];
+        final doseStr = parts[2];
+        final scheduledMs = parts.length > 3 ? int.tryParse(parts[3]) : null;
+        if (scheduledMs != null &&
+            DateTime.now().millisecondsSinceEpoch < scheduledMs) { continue; }
+        final alreadyExists =
+            InAppNotificationStore.instance.items.any((e) => e.id == reminderId);
+        if (alreadyExists) continue;
+        InAppNotificationStore.instance.add(InAppNotification(
+          id: reminderId,
+          title: 'Medicine Time',
+          description: '$medicationName • $doseStr dose',
+          time: DateTime.now(),
+          type: InAppNotificationType.medication,
+          medicationName: medicationName,
+          doseStr: doseStr,
+        ));
+      }
+    });
+  }
+
+  static FlutterLocalNotificationsPlugin get plugin => _plugin;
 }

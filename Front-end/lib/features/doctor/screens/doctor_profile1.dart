@@ -8,6 +8,8 @@ import '../../patient/screens/profile_edit_screen.dart';
 import '../../patient/screens/theme_picker_screen.dart';
 import '../../patient/screens/language_picker_screen.dart';
 import '../../../core/services/session_service.dart';
+import '../../auth/screens/role_chooser_screen.dart';
+import '../../auth/widgets/medilink_id_chip.dart';
 import 'doctor_location_picker_screen.dart';
 
 class MenuTab extends StatefulWidget {
@@ -24,8 +26,10 @@ class _MenuTabState extends State<MenuTab> {
 
     // Items built here so they update when language changes
     final items = [
-      _MenuItem.image('assets/images/placeholder.png', l.nearBy,
+      _MenuItem.icon(Icons.location_on_outlined, l.clinicLocation,
           const Color(0xFF4CAF50), ''),
+      _MenuItem.icon(Icons.switch_account_rounded, 'Switch account',
+          const Color(0xFF159E8C), ''),
       _MenuItem.icon(Icons.person_outline_rounded, l.myProfile,
           const Color(0xFF9C27B0), ''),
       _MenuItem.icon(
@@ -105,6 +109,13 @@ class _MenuTabState extends State<MenuTab> {
                           Text(displayEmail,
                               style: const TextStyle(
                                   color: Colors.white70, fontSize: 13)),
+                          if (user?.medilinkId != null) ...[
+                            const SizedBox(height: 8),
+                            MedilinkIdChip(
+                              label: roleIdLabel(user!.role),
+                              id: user.medilinkId!,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -177,18 +188,21 @@ class _MenuTabState extends State<MenuTab> {
                                     builder: (_) =>
                                         const DoctorLocationPickerScreen()));
                           } else if (i == 1) {
+                            // Switch / verify another account on this email
+                            openAccountSwitcher(context);
+                          } else if (i == 2) {
                             // My Profile
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ProfileEditScreen()));
-                          } else if (i == 2) {
+                          } else if (i == 3) {
                             // Themes
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ThemePickerScreen()));
-                          } else if (i == 3) {
+                          } else if (i == 4) {
                             // Language
                             Navigator.push(
                                 context,

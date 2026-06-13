@@ -9,7 +9,12 @@ import 'profile_edit_screen.dart';
 import 'theme_picker_screen.dart';
 import 'language_picker_screen.dart';
 import '../../../core/services/session_service.dart';
+import '../../../core/services/location_service.dart';
+import '../../../core/widgets/app_snack_bar.dart';
+import '../../auth/screens/role_chooser_screen.dart';
+import '../../auth/widgets/medilink_id_chip.dart';
 
+//hello
 class MenuTab extends StatefulWidget {
   const MenuTab({super.key});
 
@@ -18,27 +23,42 @@ class MenuTab extends StatefulWidget {
 }
 
 class _MenuTabState extends State<MenuTab> {
+  // Clears the cached GPS fix and re-acquires it, so the nearby-doctors list
+  // uses fresh coordinates next time the Home tab loads.
+  Future<void> _refreshLocation() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    LocationService.clearCache();
+    final pos = await LocationService.getLocation();
+    if (!mounted) return;
+    Navigator.pop(context); // close loader
+    if (pos != null) {
+      AppSnackBar.show(context, 'Location refreshed', backgroundColor: AppColors.primary);
+    } else {
+      AppSnackBar.show(context, 'Could not get location. Check GPS and permission.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context)!;
 
     // Items built here so they update when language changes
     final items = [
-      _MenuItem.image('assets/images/placeholder.png', l.nearBy,
-          const Color(0xFF4CAF50), ''),
-      _MenuItem.icon(Icons.person_outline_rounded, l.myProfile,
-          const Color(0xFF9C27B0), ''),
-      _MenuItem.icon(
-          Icons.nightlight_sharp, l.themes, const Color(0xFFFFC857), ''),
-      _MenuItem.icon(Icons.language, l.language, const Color(0xFF2F80ED), ''),
-      _MenuItem.icon(Icons.notifications_active_outlined, l.notifications,
-          const Color.fromARGB(255, 130, 169, 14), ''),
-      _MenuItem.icon(
-          Icons.help_outline_rounded, l.helpSupport, AppColors.grey, ''),
+      _MenuItem.icon(Icons.my_location_rounded, l.refreshLocation, const Color(0xFF22C55E), ''),
+      _MenuItem.icon(Icons.switch_account_rounded, 'Switch account',const Color(0xFF14B8A6), ''),
+      _MenuItem.icon(Icons.person_outline_rounded, l.myProfile, const Color(0xFFA855F7), ''),
+      _MenuItem.icon(Icons.nightlight_sharp, l.themes, const Color(0xFFF59E0B), ''),
+      _MenuItem.icon(Icons.language, l.language, const Color(0xFF3B82F6), ''),
+      _MenuItem.icon(Icons.notifications_active_outlined, l.notifications, const Color(0xFF84CC16), ''),
+      _MenuItem.icon(Icons.help_outline_rounded, l.helpSupport, const Color(0xFF64748B), ''),
     ];
 
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -105,6 +125,13 @@ class _MenuTabState extends State<MenuTab> {
                           Text(displayEmail,
                               style: const TextStyle(
                                   color: Colors.white70, fontSize: 13)),
+                          if (user?.medilinkId != null) ...[
+                            const SizedBox(height: 8),
+                            MedilinkIdChip(
+                              label: roleIdLabel(user!.role),
+                              id: user.medilinkId!,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -179,8 +206,7 @@ class _MenuTabState extends State<MenuTab> {
             const SizedBox(height: 16),
 
             // Menu items list
-            Expanded(
-              child: Container(
+            Container(
                 decoration: BoxDecoration(
                   color: context.card,
                   borderRadius: BorderRadius.circular(16),
@@ -199,6 +225,8 @@ class _MenuTabState extends State<MenuTab> {
                   borderRadius: BorderRadius.circular(16),
                   child: ListView.separated(
                     padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
                     itemCount: items.length,
                     separatorBuilder: (_, __) =>
                         Divider(color: context.divider, height: 1, indent: 58),
@@ -231,20 +259,25 @@ class _MenuTabState extends State<MenuTab> {
                         trailing: const Icon(Icons.arrow_forward_ios_rounded,
                             size: 13, color: AppColors.grey),
                         onTap: () {
-                          // index 0 — Nearby (no action yet)
-                          if (i == 1) {
+                          if (i == 0) {
+                            // Refresh location
+                            _refreshLocation();
+                          } else if (i == 1) {
+                            // Switch / verify another account on this email
+                            openAccountSwitcher(context);
+                          } else if (i == 2) {
                             // My Profile
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ProfileEditScreen()));
-                          } else if (i == 2) {
+                          } else if (i == 3) {
                             // Themes
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ThemePickerScreen()));
-                          } else if (i == 3) {
+                          } else if (i == 4) {
                             // Language
                             Navigator.push(
                                 context,
@@ -263,7 +296,6 @@ class _MenuTabState extends State<MenuTab> {
                   ),
                 ),
               ),
-            ),
             const SizedBox(height: 14),
 
             // Logout

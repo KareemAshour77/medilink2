@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/records_data.dart';
+import '../widgets/emergency_card_sheet.dart';
 import 'record_detail_screen.dart';
 import 'add_record_screen.dart';
 
@@ -354,55 +355,7 @@ void didChangeDependencies() {
 
   // ── Emergency card bottom sheet ───────────────────────────────────────────
   void _showEmergencyCard(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: context.card,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Center(child: Container(width: 40, height: 4,
-              decoration: BoxDecoration(color: AppColors.grey.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(2)))),
-          const SizedBox(height: 20),
-          Row(children: [
-            const Icon(Icons.emergency_outlined, color: AppColors.error, size: 24),
-            const SizedBox(width: 10),
-            Text('Emergency Card',
-                style: TextStyle(color: context.text,
-                    fontSize: 18, fontWeight: FontWeight.bold)),
-          ]),
-          const SizedBox(height: 4),
-          const Text('Critical info for first responders',
-              style: TextStyle(color: AppColors.grey, fontSize: 13)),
-          const SizedBox(height: 20),
-          _EmergencySection(title: 'Chronic Diseases',
-              items: const ['Diabetes (Type 2)', 'Arrhythmia'],
-              color: AppColors.error),
-          const SizedBox(height: 16),
-          _EmergencySection(title: 'Allergies',
-              items: const ['Penicillin', 'Shellfish'],
-              color: AppColors.warning),
-          const SizedBox(height: 16),
-          _EmergencySection(title: 'Current Medications',
-              items: const ['Metformin 500mg (twice daily)',
-                            'Beta-blocker 25mg (daily)'],
-              color: AppColors.primary),
-          const SizedBox(height: 24),
-          OutlinedButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.edit_outlined),
-            label: const Text('Edit Emergency Info'),
-            style: OutlinedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 48)),
-          ),
-          const SizedBox(height: 16),
-        ]),
-      ),
-    );
+    showEmergencyCardSheet(context);
   }
 }
 
@@ -763,26 +716,3 @@ class _TypeRow extends StatelessWidget {
   );
 }
 
-class _EmergencySection extends StatelessWidget {
-  final String title;
-  final List<String> items;
-  final Color color;
-  const _EmergencySection({required this.title, required this.items, required this.color});
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(title, style: TextStyle(color: color,
-        fontSize: 13, fontWeight: FontWeight.w600)),
-    const SizedBox(height: 8),
-    ...items.map((i) => Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(children: [
-        Container(width: 8, height: 8,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 10),
-        Text(i, style: TextStyle(color: context.text, fontSize: 14)),
-      ]),
-    )),
-  ]);
-}

@@ -131,6 +131,8 @@
 
   "menu": "Меню",
   "nearBy": "Рядом",
+  "refreshLocation": "Обновить местоположение",
+  "clinicLocation": "Местоположение клиники",
   "myProfile": "Мой профиль",
   "notifications": "Уведомления",
   "helpSupport": "Помощь и поддержка",

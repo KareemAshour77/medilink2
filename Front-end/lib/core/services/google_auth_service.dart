@@ -23,6 +23,12 @@ class GoogleNeedsSignUp {
   });
 }
 
+/// Returned when the email has several role-accounts → show the role chooser.
+class GoogleMultipleAccounts {
+  final List<Map<String, dynamic>> accounts;
+  const GoogleMultipleAccounts(this.accounts);
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 /// Handles Google Sign-In without Firebase.
@@ -95,6 +101,14 @@ class GoogleAuthService {
         name: data['name']?.toString() ?? googleUser.displayName ?? '',
         picture: data['picture']?.toString() ?? googleUser.photoUrl,
       );
+    }
+
+    // Several role-accounts on this email → role chooser
+    if (result['accounts'] is List && (result['accounts'] as List).isNotEmpty) {
+      final accounts = (result['accounts'] as List)
+          .map((a) => (a as Map).cast<String, dynamic>())
+          .toList();
+      return GoogleMultipleAccounts(accounts);
     }
 
     // Missing token (unexpected server error)

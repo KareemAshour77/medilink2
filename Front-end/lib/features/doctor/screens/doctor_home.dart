@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/services/chat_api_service.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/services/fcm_service.dart';
 import 'doctor_dashboard.dart';
 import 'doctor_patients.dart';
 import 'doctor_appointments.dart';
 import 'doctor_chat_list.dart';
+import 'doctor_chat_screen.dart';
 import 'doctor_profile1.dart';
 
 class DoctorHome extends StatefulWidget {
@@ -12,8 +17,78 @@ class DoctorHome extends StatefulWidget {
   State<DoctorHome> createState() => _DoctorHomeState();
 }
 
-class _DoctorHomeState extends State<DoctorHome> {
+class _DoctorHomeState extends State<DoctorHome> with WidgetsBindingObserver {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    FcmService.chatNavNotifier.addListener(_onChatNavNotify);
+    // Handles terminated-state: main.dart wrote PendingNavigation from SharedPrefs
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handlePendingNav());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    FcmService.chatNavNotifier.removeListener(_onChatNavNotify);
+    super.dispose();
+  }
+
+  // Case 3 (foreground) + Case 2 backgrounded FCM tap: notifier fired directly
+  void _onChatNavNotify() {
+    final convId = FcmService.chatNavNotifier.value;
+    if (convId == null) return;
+    FcmService.chatNavNotifier.value = null;
+    _navigateToChat(convId);
+  }
+
+  // Case 2 (backgrounded local notification): app resumes, read SharedPrefs
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPendingNavFromPrefs();
+    }
+  }
+
+  Future<void> _checkPendingNavFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final convId = prefs.getString('pending_chat_nav');
+    if (convId == null || !mounted) return;
+    await prefs.remove('pending_chat_nav');
+    await _navigateToChat(convId);
+  }
+
+  // Case 1 (terminated): PendingNavigation set by main.dart from SharedPrefs
+  Future<void> _handlePendingNav() async {
+    final convId = PendingNavigation.chatConversationId;
+    if (convId == null) return;
+    PendingNavigation.chatConversationId = null;
+    await _navigateToChat(convId);
+  }
+
+  Future<void> _navigateToChat(String convId) async {
+    if (!mounted) return;
+    setState(() => _index = 3); // switch to Chat tab first
+    try {
+      final conv = await ChatApiService.getConversationById(convId);
+      if (conv == null || !mounted) return;
+      final other = (conv['other'] as Map<String, dynamic>?) ?? {};
+      final imgPath = other['image'] as String?;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DoctorChatScreen(
+            conversationId: convId,
+            patientId: other['id'] as String? ?? '',
+            patientName: other['name'] as String? ?? 'Patient',
+            patientImageUrl: imgPath != null ? '${ApiService.baseUrl}/$imgPath' : null,
+          ),
+        ),
+      );
+    } catch (_) {}
+  }
 
   static const _tabs = [
     DoctorDashboard(),

@@ -18,6 +18,7 @@ import 'package:file_picker/file_picker.dart';
 
 import '../../../core/services/api_ai.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
 
 import '../../../models/chat_models.dart';
 import '../../../core/widgets/messages_list.dart';
@@ -814,12 +815,8 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   }
 
   void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature model coming soon'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    AppSnackBar.show(context, '$feature model coming soon',
+        backgroundColor: Colors.black87, duration: const Duration(seconds: 2));
   }
 
   // ════════════════════════════════════════════════════════

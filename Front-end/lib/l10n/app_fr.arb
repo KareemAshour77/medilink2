@@ -131,6 +131,8 @@
 
   "menu": "Menu",
   "nearBy": "À proximité",
+  "refreshLocation": "Actualiser la position",
+  "clinicLocation": "Emplacement de la clinique",
   "myProfile": "Mon profil",
   "notifications": "Notifications",
   "helpSupport": "Aide & Support",

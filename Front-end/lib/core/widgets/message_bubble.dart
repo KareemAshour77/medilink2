@@ -20,6 +20,7 @@ import 'package:flutter/services.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../models/chat_models.dart';
 import 'typing_indicator.dart'; // re-uses BotAvatar
+import 'app_snack_bar.dart';
 
 // ══════════════════════════════════════════════════════════
 // MessageBubble — public API
@@ -48,13 +49,11 @@ class _MessageBubbleState extends State<MessageBubble> {
 
   void _copyText(BuildContext context, String text) {
     Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Copied to clipboard'),
-        duration: const Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+    AppSnackBar.show(
+      context,
+      'Copied to clipboard',
+      backgroundColor: Colors.black87,
+      duration: const Duration(seconds: 1),
     );
   }
 
