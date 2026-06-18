@@ -20,6 +20,8 @@ import 'ai_thinking_card.dart';
 import 'message_bubble.dart';
 import 'typing_indicator.dart';
 import 'chat_animations.dart';
+import 'follow_up_card.dart';
+import 'report_image_bubble.dart';
 
 class MessagesList extends StatelessWidget {
   final List<ChatMessage> messages;
@@ -29,11 +31,24 @@ class MessagesList extends StatelessWidget {
   /// Called when the user taps "retry" on a failed message.
   final void Function(ChatMessage message) onRetry;
 
+  /// Called when the user confirms a follow-up options card.
+  final void Function(ChatMessage message, List<String> selectedIds)?
+      onFollowUpSubmit;
+
+  /// Called when a bot text message finishes typing (by message id).
+  final void Function(String messageId)? onBotTextComplete;
+
+  /// Whether the app language is Arabic (RTL follow-up cards / labels).
+  final bool isArabic;
+
   const MessagesList({
     required this.messages,
     required this.isTyping,
     required this.scrollController,
     required this.onRetry,
+    this.onFollowUpSubmit,
+    this.onBotTextComplete,
+    this.isArabic = false,
     super.key,
   });
 
@@ -69,6 +84,30 @@ class MessagesList extends StatelessWidget {
               );
             }
 
+            // ── Follow-up options card ──────────────────
+            if (msg.isFollowUp && msg.followUp != null) {
+              return AnimatedMessageEntry(
+                key: ValueKey(msg.id),
+                child: FollowUpCard(
+                  followUp: msg.followUp!,
+                  answered: msg.answered,
+                  isArabic: isArabic,
+                  onSubmit: (ids) => onFollowUpSubmit?.call(msg, ids),
+                ),
+              );
+            }
+
+            // ── Generated report / image bubble ─────────
+            if (msg.isReport && msg.imageUrl != null) {
+              return AnimatedMessageEntry(
+                key: ValueKey(msg.id),
+                child: ReportImageBubble(
+                  imageUrl: msg.imageUrl!,
+                  downloadUrl: msg.downloadUrl,
+                ),
+              );
+            }
+
             // ── Regular chat bubble ──────────────────────
             return AnimatedMessageEntry(
               key: ValueKey(msg.id),
@@ -76,6 +115,9 @@ class MessagesList extends StatelessWidget {
                 message: msg,
                 onRetry: msg.status == MsgStatus.failed
                     ? () => onRetry(msg)
+                    : null,
+                onTextComplete: (msg.isBot && msg.type == MsgType.text)
+                    ? () => onBotTextComplete?.call(msg.id)
                     : null,
               ),
             );

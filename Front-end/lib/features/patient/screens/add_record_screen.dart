@@ -1,14 +1,44 @@
 // lib/screens/home/add_record_screen.dart
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
+import '../../../core/services/records_service.dart';
+import '../../../core/utils/record_labels.dart';
 import '../../../data/records_data.dart';
 
+/// Add New Record. Two modes:
+///   • Patient mode (default): all 4 record types, saved via POST /records.
+///   • Doctor prescription mode (`prescriptionOnly: true`, with `patientId`):
+///     type is locked to Prescription, NO status selector, saved via
+///     POST /records/prescription with status auto-set to taking_now.
 class AddRecordScreen extends StatefulWidget {
-  final Function(MedicalRecord) onAdd;
-  const AddRecordScreen({super.key, required this.onAdd});
+  /// When true → doctor "Create Prescription" mode (prescription only).
+  final bool prescriptionOnly;
+
+  /// Required in prescription mode — the patient the prescription is for.
+  final String? patientId;
+  final String? patientName;
+
+  const AddRecordScreen({
+    super.key,
+    this.prescriptionOnly = false,
+    this.patientId,
+    this.patientName,
+  });
 
   @override
   State<AddRecordScreen> createState() => _AddRecordScreenState();
+}
+
+class _DrugRow {
+  final name = TextEditingController();
+  final dosage = TextEditingController();
+  final frequency = TextEditingController();
+  void dispose() {
+    name.dispose();
+    dosage.dispose();
+    frequency.dispose();
+  }
 }
 
 class _AddRecordScreenState extends State<AddRecordScreen> {
@@ -20,7 +50,9 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
   RecordType   _selectedType   = RecordType.labTest;
   RecordStatus _selectedStatus = RecordStatus.stable;
   DateTime     _selectedDate   = DateTime.now();
-  final List<String> _attachments    = [];
+  final List<String> _attachments = [];
+  final List<_DrugRow> _drugRows = [_DrugRow()];
+  bool _saving = false;
 
   String? _titleError;
   String? _doctorError;
@@ -35,33 +67,76 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
     'mri_image.jpg',
   ];
 
+  bool get _isPrescription =>
+      widget.prescriptionOnly || _selectedType == RecordType.prescription;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.prescriptionOnly) _selectedType = RecordType.prescription;
+  }
+
   bool _validate() {
     setState(() {
-      _titleError    = _titleCtrl.text.trim().isEmpty     ? 'Title is required'     : null;
-      _doctorError   = _doctorCtrl.text.trim().isEmpty    ? 'Doctor / Facility is required' : null;
-      _diagnosisError= _diagnosisCtrl.text.trim().isEmpty ? 'Diagnosis is required' : null;
+      _titleError    = _titleCtrl.text.trim().isEmpty ? 'Title is required' : null;
+      // Doctor/facility + diagnosis are optional for prescriptions.
+      _doctorError   = (_isPrescription || _doctorCtrl.text.trim().isNotEmpty)
+          ? null : 'Doctor / Facility is required';
+      _diagnosisError = (_isPrescription || _diagnosisCtrl.text.trim().isNotEmpty)
+          ? null : 'Diagnosis is required';
     });
     return _titleError == null && _doctorError == null && _diagnosisError == null;
   }
 
-  void _save() {
+  List<({String name, String dosage, String frequency})> _collectItems() => _drugRows
+      .where((r) => r.name.text.trim().isNotEmpty)
+      .map((r) => (
+            name: r.name.text.trim(),
+            dosage: r.dosage.text.trim(),
+            frequency: r.frequency.text.trim(),
+          ))
+      .toList();
+
+  Future<void> _save() async {
     if (!_validate()) return;
-    final record = MedicalRecord(
-      id:              DateTime.now().millisecondsSinceEpoch.toString(),
-      title:           _titleCtrl.text.trim(),
-      doctorOrFacility:_doctorCtrl.text.trim(),
-      date:            _selectedDate,
-      type:            _selectedType,
-      status:          _selectedStatus,
-      diagnosis:       _diagnosisCtrl.text.trim(),
-      symptoms:        [],
-      treatments:      [],
-      doctorNotes:     _notesCtrl.text.trim(),
-      attachments:     _attachments,
-      condition:       _titleCtrl.text.trim(),
-    );
-    widget.onAdd(record);
-    Navigator.pop(context);
+    if (_isPrescription && _collectItems().isEmpty) {
+      AppSnackBar.show(context, context.l.addMedicationFirst);
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      if (widget.prescriptionOnly) {
+        // Doctor creating a prescription for a patient (status auto taking_now).
+        await RecordsService.createPrescription(
+          patientId: widget.patientId ?? '',
+          title: _titleCtrl.text.trim(),
+          doctorOrFacility: _doctorCtrl.text.trim().isEmpty ? null : _doctorCtrl.text.trim(),
+          description: _diagnosisCtrl.text.trim().isEmpty ? null : _diagnosisCtrl.text.trim(),
+          doctorNotes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+          items: _collectItems(),
+        );
+      } else {
+        // Patient creating any record type.
+        await RecordsService.create(
+          type: recordTypeToApi(_selectedType),
+          title: _titleCtrl.text.trim(),
+          doctorOrFacility: _doctorCtrl.text.trim().isEmpty ? null : _doctorCtrl.text.trim(),
+          date: _selectedDate.toIso8601String(),
+          status: _isPrescription ? null : recordStatusToApi(_selectedStatus),
+          description: _diagnosisCtrl.text.trim().isEmpty ? null : _diagnosisCtrl.text.trim(),
+          doctorNotes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+          attachments: _attachments,
+          items: _isPrescription ? _collectItems() : const [],
+        );
+      }
+      if (!mounted) return;
+      Navigator.pop(context, true);
+      AppSnackBar.show(context, context.l.recordSaved, backgroundColor: AppColors.primary);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      AppSnackBar.show(context, e.toString().replaceFirst('Exception: ', ''));
+    }
   }
 
   Future<void> _pickDate() async {
@@ -122,6 +197,9 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
     _doctorCtrl.dispose();
     _diagnosisCtrl.dispose();
     _notesCtrl.dispose();
+    for (final r in _drugRows) {
+      r.dispose();
+    }
     super.dispose();
   }
 
@@ -140,24 +218,36 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
           icon: Icon(Icons.close_rounded, color: txt),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text('Add New Record',
+        title: Text(
+            widget.prescriptionOnly
+                ? context.l.recordTypePrescription
+                : context.l.addNewRecord,
             style: TextStyle(color: txt, fontWeight: FontWeight.bold)),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-          // ── Record Type ──────────────────────────────────────────────────
-          _Label(txt: txt, text: 'Record Type'),
-          const SizedBox(height: 10),
-          _TypeSelector(
-            selected: _selectedType,
-            onChanged: (t) => setState(() => _selectedType = t),
-          ),
-          const SizedBox(height: 20),
+          // ── Record Type (hidden in doctor prescription mode) ─────────────
+          if (widget.prescriptionOnly) ...[
+            if (widget.patientName != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Text('${context.l.forPatient} ${widget.patientName}',
+                    style: const TextStyle(color: AppColors.grey, fontSize: 13)),
+              ),
+          ] else ...[
+            _Label(txt: txt, text: context.l.recordTypeLabel),
+            const SizedBox(height: 10),
+            _TypeSelector(
+              selected: _selectedType,
+              onChanged: (t) => setState(() => _selectedType = t),
+            ),
+            const SizedBox(height: 20),
+          ],
 
           // ── Title ────────────────────────────────────────────────────────
-          _Label(txt: txt, text: 'Record Title'),
+          _Label(txt: txt, text: context.l.recordTitle),
           const SizedBox(height: 8),
           TextField(
             controller: _titleCtrl,
@@ -171,7 +261,7 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
           const SizedBox(height: 16),
 
           // ── Doctor / Facility ────────────────────────────────────────────
-          _Label(txt: txt, text: 'Doctor / Facility'),
+          _Label(txt: txt, text: context.l.doctorFacility),
           const SizedBox(height: 8),
           TextField(
             controller: _doctorCtrl,
@@ -185,7 +275,7 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
           const SizedBox(height: 16),
 
           // ── Date ─────────────────────────────────────────────────────────
-          _Label(txt: txt, text: 'Date'),
+          _Label(txt: txt, text: context.l.date),
           const SizedBox(height: 8),
           GestureDetector(
             onTap: _pickDate,
@@ -210,32 +300,52 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
           ),
           const SizedBox(height: 16),
 
-          // ── Status ───────────────────────────────────────────────────────
-          _Label(txt: txt, text: 'Status'),
-          const SizedBox(height: 10),
-          Row(children: [
-            _StatusChip(
-              label: 'Stable', color: AppColors.success,
-              selected: _selectedStatus == RecordStatus.stable,
-              onTap: () => setState(() => _selectedStatus = RecordStatus.stable),
-            ),
-            const SizedBox(width: 10),
-            _StatusChip(
-              label: 'Critical', color: AppColors.error,
-              selected: _selectedStatus == RecordStatus.critical,
-              onTap: () => setState(() => _selectedStatus = RecordStatus.critical),
-            ),
-            const SizedBox(width: 10),
-            _StatusChip(
-              label: 'Pending', color: AppColors.warning,
-              selected: _selectedStatus == RecordStatus.pending,
-              onTap: () => setState(() => _selectedStatus = RecordStatus.pending),
-            ),
-          ]),
-          const SizedBox(height: 20),
+          // ── Status (hidden for prescriptions — auto 'Taking now') ────────
+          if (!_isPrescription) ...[
+            _Label(txt: txt, text: context.l.status),
+            const SizedBox(height: 10),
+            Row(children: [
+              _StatusChip(
+                label: context.l.stable, color: AppColors.success,
+                selected: _selectedStatus == RecordStatus.stable,
+                onTap: () => setState(() => _selectedStatus = RecordStatus.stable),
+              ),
+              const SizedBox(width: 10),
+              _StatusChip(
+                label: context.l.critical, color: AppColors.error,
+                selected: _selectedStatus == RecordStatus.critical,
+                onTap: () => setState(() => _selectedStatus = RecordStatus.critical),
+              ),
+              const SizedBox(width: 10),
+              _StatusChip(
+                label: context.l.pending, color: AppColors.warning,
+                selected: _selectedStatus == RecordStatus.pending,
+                onTap: () => setState(() => _selectedStatus = RecordStatus.pending),
+              ),
+            ]),
+            const SizedBox(height: 20),
+          ],
+
+          // ── Medications (prescriptions only) ─────────────────────────────
+          if (_isPrescription) ...[
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              _Label(txt: txt, text: context.l.medications),
+              TextButton.icon(
+                onPressed: () => setState(() => _drugRows.add(_DrugRow())),
+                icon: const Icon(Icons.add_rounded, color: AppColors.primary, size: 18),
+                label: Text(context.l.addLabel,
+                    style: const TextStyle(color: AppColors.primary, fontSize: 13)),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            for (var i = 0; i < _drugRows.length; i++) _drugCard(i, txt, card),
+            const SizedBox(height: 20),
+          ],
 
           // ── Diagnosis ────────────────────────────────────────────────────
-          _Label(txt: txt, text: 'Diagnosis / Description'),
+          _Label(txt: txt, text: _isPrescription
+              ? context.l.notesDescriptionOptional
+              : context.l.diagnosisDescription),
           const SizedBox(height: 8),
           TextField(
             controller: _diagnosisCtrl,
@@ -250,7 +360,7 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
           const SizedBox(height: 16),
 
           // ── Doctor Notes ─────────────────────────────────────────────────
-          _Label(txt: txt, text: 'Doctor Notes (optional)'),
+          _Label(txt: txt, text: context.l.doctorNotesOptional),
           const SizedBox(height: 8),
           TextField(
             controller: _notesCtrl,
@@ -264,13 +374,13 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
 
           // ── Attachments ──────────────────────────────────────────────────
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            _Label(txt: txt, text: 'Attachments'),
+            _Label(txt: txt, text: context.l.attachments),
             TextButton.icon(
               onPressed: _pickAttachment,
               icon: const Icon(Icons.attach_file_rounded,
                   color: AppColors.primary, size: 18),
-              label: const Text('Add File',
-                  style: TextStyle(color: AppColors.primary, fontSize: 13)),
+              label: Text(context.l.addFile,
+                  style: const TextStyle(color: AppColors.primary, fontSize: 13)),
             ),
           ]),
           if (_attachments.isEmpty)
@@ -300,11 +410,59 @@ class _AddRecordScreenState extends State<AddRecordScreen> {
 
           const SizedBox(height: 32),
           ElevatedButton(
-            onPressed: _save,
-            child: const Text('Save Record'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                : Text(widget.prescriptionOnly
+                    ? context.l.createPrescription
+                    : context.l.saveRecord),
           ),
           const SizedBox(height: 40),
         ]),
+      ),
+    );
+  }
+
+  Widget _drugCard(int i, Color txt, Color card) {
+    final r = _drugRows[i];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.divider),
+      ),
+      child: Column(children: [
+        Row(children: [
+          Expanded(child: _drugField(r.name, context.l.drugName, txt)),
+          if (_drugRows.length > 1)
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.grey),
+              onPressed: () => setState(() => _drugRows.removeAt(i).dispose()),
+            ),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: _drugField(r.dosage, context.l.dosageHint, txt)),
+          const SizedBox(width: 8),
+          Expanded(child: _drugField(r.frequency, context.l.frequencyHint, txt)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _drugField(TextEditingController c, String hint, Color txt) {
+    return TextField(
+      controller: c,
+      style: TextStyle(color: txt, fontSize: 14),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: AppColors.grey, fontSize: 13),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       ),
     );
   }
@@ -352,7 +510,7 @@ class _TypeSelector extends StatelessWidget {
             child: Row(children: [
               Icon(t.$3, color: isSelected ? t.$4 : AppColors.grey, size: 18),
               const SizedBox(width: 8),
-              Text(t.$2,
+              Text(recordTypeLabelL10n(context.l, recordTypeToApi(t.$1)),
                   style: TextStyle(
                       color: isSelected ? t.$4 : AppColors.grey,
                       fontSize: 13,

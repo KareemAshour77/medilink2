@@ -2084,6 +2084,492 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Start: {date}'**
   String start(Object date);
+
+  /// No description provided for @recordTypeLab.
+  ///
+  /// In en, this message translates to:
+  /// **'Lab Test'**
+  String get recordTypeLab;
+
+  /// No description provided for @recordTypeImaging.
+  ///
+  /// In en, this message translates to:
+  /// **'Imaging'**
+  String get recordTypeImaging;
+
+  /// No description provided for @recordTypePrescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Prescription'**
+  String get recordTypePrescription;
+
+  /// No description provided for @recordTypeDiagnosis.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnosis'**
+  String get recordTypeDiagnosis;
+
+  /// No description provided for @rxTakingNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Taking now'**
+  String get rxTakingNow;
+
+  /// No description provided for @rxEffective.
+  ///
+  /// In en, this message translates to:
+  /// **'Effective'**
+  String get rxEffective;
+
+  /// No description provided for @rxNotEffective.
+  ///
+  /// In en, this message translates to:
+  /// **'Not effective'**
+  String get rxNotEffective;
+
+  /// No description provided for @apptPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Pending'**
+  String get apptPending;
+
+  /// No description provided for @apptConfirmed.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirmed'**
+  String get apptConfirmed;
+
+  /// No description provided for @apptRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Rejected'**
+  String get apptRejected;
+
+  /// No description provided for @apptEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'Ended'**
+  String get apptEnded;
+
+  /// No description provided for @apptFollowUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow-Up'**
+  String get apptFollowUp;
+
+  /// No description provided for @apptCheckUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Check-Up'**
+  String get apptCheckUp;
+
+  /// No description provided for @apptConsultation.
+  ///
+  /// In en, this message translates to:
+  /// **'Consultation'**
+  String get apptConsultation;
+
+  /// No description provided for @viewRecords.
+  ///
+  /// In en, this message translates to:
+  /// **'View Records'**
+  String get viewRecords;
+
+  /// No description provided for @btnChatNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat Now'**
+  String get btnChatNow;
+
+  /// No description provided for @createPrescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Create Prescription'**
+  String get createPrescription;
+
+  /// No description provided for @approve.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve'**
+  String get approve;
+
+  /// No description provided for @reject.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get reject;
+
+  /// No description provided for @updateStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Status'**
+  String get updateStatus;
+
+  /// No description provided for @addRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Record'**
+  String get addRecord;
+
+  /// No description provided for @addLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get addLabel;
+
+  /// No description provided for @continueLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get continueLabel;
+
+  /// No description provided for @retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
+
+  /// No description provided for @loadingDots.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading…'**
+  String get loadingDots;
+
+  /// No description provided for @recordTypeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Record Type'**
+  String get recordTypeLabel;
+
+  /// No description provided for @notesDescriptionOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Notes / Description (optional)'**
+  String get notesDescriptionOptional;
+
+  /// No description provided for @doctorNotesOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Doctor Notes (optional)'**
+  String get doctorNotesOptional;
+
+  /// No description provided for @medications.
+  ///
+  /// In en, this message translates to:
+  /// **'Medications'**
+  String get medications;
+
+  /// No description provided for @drugName.
+  ///
+  /// In en, this message translates to:
+  /// **'Drug name'**
+  String get drugName;
+
+  /// No description provided for @dosageHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Dosage (e.g. 500mg)'**
+  String get dosageHint;
+
+  /// No description provided for @frequencyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Frequency (e.g. 2x/day)'**
+  String get frequencyHint;
+
+  /// No description provided for @medicationStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Medication Status'**
+  String get medicationStatus;
+
+  /// No description provided for @tapToUpdateStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap to update how this medication is working for you.'**
+  String get tapToUpdateStatus;
+
+  /// No description provided for @addMedicationFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Add at least one medication.'**
+  String get addMedicationFirst;
+
+  /// No description provided for @recordSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Record saved'**
+  String get recordSaved;
+
+  /// No description provided for @recordDetails.
+  ///
+  /// In en, this message translates to:
+  /// **'Record Details'**
+  String get recordDetails;
+
+  /// No description provided for @noRecordsForPatient.
+  ///
+  /// In en, this message translates to:
+  /// **'No records for this patient yet.'**
+  String get noRecordsForPatient;
+
+  /// No description provided for @noRecordsFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No records found'**
+  String get noRecordsFound;
+
+  /// No description provided for @forPatient.
+  ///
+  /// In en, this message translates to:
+  /// **'For'**
+  String get forPatient;
+
+  /// No description provided for @recordsAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Records access'**
+  String get recordsAccess;
+
+  /// No description provided for @accessRequested.
+  ///
+  /// In en, this message translates to:
+  /// **'Access requested'**
+  String get accessRequested;
+
+  /// No description provided for @accessRequestSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Access request sent'**
+  String get accessRequestSent;
+
+  /// No description provided for @waitingPatientApproval.
+  ///
+  /// In en, this message translates to:
+  /// **'They have 15 minutes to approve. Tap View again once approved.'**
+  String get waitingPatientApproval;
+
+  /// No description provided for @accessGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Access granted'**
+  String get accessGranted;
+
+  /// No description provided for @requestRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Request rejected'**
+  String get requestRejected;
+
+  /// No description provided for @accessExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'This access request has expired'**
+  String get accessExpired;
+
+  /// No description provided for @wantsToViewRecords.
+  ///
+  /// In en, this message translates to:
+  /// **'Wants to view your medical records.'**
+  String get wantsToViewRecords;
+
+  /// No description provided for @noPendingAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'No pending requests. When a doctor asks to view your medical records, the request appears here.'**
+  String get noPendingAccess;
+
+  /// No description provided for @expiresInLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'expires in'**
+  String get expiresInLabel;
+
+  /// No description provided for @minutesShort.
+  ///
+  /// In en, this message translates to:
+  /// **'min'**
+  String get minutesShort;
+
+  /// No description provided for @ok.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get ok;
+
+  /// No description provided for @schedule.
+  ///
+  /// In en, this message translates to:
+  /// **'Schedule'**
+  String get schedule;
+
+  /// No description provided for @pendingApprovals.
+  ///
+  /// In en, this message translates to:
+  /// **'pending approvals'**
+  String get pendingApprovals;
+
+  /// No description provided for @filterAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get filterAll;
+
+  /// No description provided for @filterActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get filterActive;
+
+  /// No description provided for @filterToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get filterToday;
+
+  /// No description provided for @noAppointmentsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No appointments yet.'**
+  String get noAppointmentsYet;
+
+  /// No description provided for @myAppointments.
+  ///
+  /// In en, this message translates to:
+  /// **'My Appointments'**
+  String get myAppointments;
+
+  /// No description provided for @myPatients.
+  ///
+  /// In en, this message translates to:
+  /// **'My Patients'**
+  String get myPatients;
+
+  /// No description provided for @patientsUnderCare.
+  ///
+  /// In en, this message translates to:
+  /// **'under care'**
+  String get patientsUnderCare;
+
+  /// No description provided for @searchPatients.
+  ///
+  /// In en, this message translates to:
+  /// **'Search by name or condition…'**
+  String get searchPatients;
+
+  /// No description provided for @noPatientsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No patients yet. Patients appear here after you approve their appointment.'**
+  String get noPatientsYet;
+
+  /// No description provided for @availability.
+  ///
+  /// In en, this message translates to:
+  /// **'Availability'**
+  String get availability;
+
+  /// No description provided for @workingDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Working days'**
+  String get workingDays;
+
+  /// No description provided for @workingHours.
+  ///
+  /// In en, this message translates to:
+  /// **'Working hours'**
+  String get workingHours;
+
+  /// No description provided for @slotDuration.
+  ///
+  /// In en, this message translates to:
+  /// **'Slot duration'**
+  String get slotDuration;
+
+  /// No description provided for @dailyBreak.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily break'**
+  String get dailyBreak;
+
+  /// No description provided for @saveAvailability.
+  ///
+  /// In en, this message translates to:
+  /// **'Save availability'**
+  String get saveAvailability;
+
+  /// No description provided for @availabilitySaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Availability saved'**
+  String get availabilitySaved;
+
+  /// No description provided for @startLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get startLabel;
+
+  /// No description provided for @endLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get endLabel;
+
+  /// No description provided for @breakStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Break start'**
+  String get breakStart;
+
+  /// No description provided for @breakEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'Break end'**
+  String get breakEnd;
+
+  /// No description provided for @bookAppointment.
+  ///
+  /// In en, this message translates to:
+  /// **'Book Appointment'**
+  String get bookAppointment;
+
+  /// No description provided for @selectAppointmentType.
+  ///
+  /// In en, this message translates to:
+  /// **'Select appointment type'**
+  String get selectAppointmentType;
+
+  /// No description provided for @chooseTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a time'**
+  String get chooseTime;
+
+  /// No description provided for @requestAppointment.
+  ///
+  /// In en, this message translates to:
+  /// **'Request Appointment'**
+  String get requestAppointment;
+
+  /// No description provided for @noSlotsAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'No available slots on this day.'**
+  String get noSlotsAvailable;
+
+  /// No description provided for @doctorNoAvailability.
+  ///
+  /// In en, this message translates to:
+  /// **'This doctor has not set their availability yet. Please check back later.'**
+  String get doctorNoAvailability;
+
+  /// No description provided for @requestSentTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Request sent to'**
+  String get requestSentTo;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

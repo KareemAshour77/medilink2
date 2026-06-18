@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 import 'package:medilink/core/services/api_service.dart';
 import 'package:medilink/core/services/in_app_notification_store.dart';
+import 'package:medilink/core/models/in_app_notification.dart';
+import 'access_requests_screen.dart';
 import 'package:medilink/core/services/reminder_store.dart';
 import 'package:medilink/core/services/location_service.dart';
 import 'package:medilink/core/services/notification_service.dart';
@@ -233,6 +235,22 @@ class _HomeTabState extends State<HomeTab> {
                           onClearedAll: () =>
                               InAppNotificationStore.instance.dismissAll(),
                           onNotificationRead: (notification) async {
+                            // Medical-records access request → open the
+                            // approvals screen instead of the chat deep-link.
+                            final isAccessReq = notification.type ==
+                                    InAppNotificationType.doctor &&
+                                notification.title
+                                    .toLowerCase()
+                                    .contains('access');
+                            if (isAccessReq) {
+                              Navigator.of(context).pop(); // close bell sheet
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        const AccessRequestsScreen()),
+                              );
+                              return;
+                            }
                             if (notification.conversationId != null) {
                               // Close the bell sheet first, then navigate
                               Navigator.of(context).pop();

@@ -1,8 +1,8 @@
 #!/bin/sh
 # This is a generated file; do not edit or check into version control.
-export "FLUTTER_ROOT=C:\flutter"
-export "FLUTTER_APPLICATION_PATH=D:\coding\MediLink\medilink\Front-end"
-export "FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH=D:\coding\MediLink\medilink\Front-end\ios\Flutter\ephemeral\Packages\.packages\FlutterFramework"
+export "FLUTTER_ROOT=S:\Packages\Flutter"
+export "FLUTTER_APPLICATION_PATH=E:\Real Projects\Aya\Final\MediLinkFrontend"
+export "FLUTTER_FRAMEWORK_SWIFT_PACKAGE_PATH=E:\Real Projects\Aya\Final\MediLinkFrontend\ios\Flutter\ephemeral\Packages\.packages\FlutterFramework"
 export "COCOAPODS_PARALLEL_CODE_SIGN=true"
 export "FLUTTER_TARGET=lib\main.dart"
 export "FLUTTER_BUILD_DIR=build"

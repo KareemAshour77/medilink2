@@ -18,6 +18,20 @@ class MedicalRecord {
   final List<String> attachments; // file names / paths
   final String condition; // for insights (most frequent condition)
 
+  // ── Backend-backed fields (null for the legacy sample data) ────────────────
+  /// Server id of the record entry; null for local/sample records.
+  final String? serverId;
+
+  /// Prescription effectiveness status: taking_now | effective | not_effective.
+  /// Only set for prescription records loaded from the backend.
+  final String? prescriptionStatus;
+
+  /// Prescription medications: [{name, dosage, frequency}].
+  final List<Map<String, String>> items;
+
+  /// 'patient' or 'doctor' — who created the record (backend records only).
+  final String createdByRole;
+
   const MedicalRecord({
     required this.id,
     required this.title,
@@ -31,7 +45,13 @@ class MedicalRecord {
     required this.doctorNotes,
     required this.attachments,
     required this.condition,
+    this.serverId,
+    this.prescriptionStatus,
+    this.items = const [],
+    this.createdByRole = 'patient',
   });
+
+  bool get isPrescription => type == RecordType.prescription;
 
   String get typeLabel {
     switch (type) {
@@ -50,6 +70,114 @@ class MedicalRecord {
       case RecordStatus.pending:  return 'Pending';
     }
   }
+
+  MedicalRecord copyWith({String? prescriptionStatus}) => MedicalRecord(
+        id: id,
+        title: title,
+        doctorOrFacility: doctorOrFacility,
+        date: date,
+        type: type,
+        status: status,
+        diagnosis: diagnosis,
+        symptoms: symptoms,
+        treatments: treatments,
+        doctorNotes: doctorNotes,
+        attachments: attachments,
+        condition: condition,
+        serverId: serverId,
+        prescriptionStatus: prescriptionStatus ?? this.prescriptionStatus,
+        items: items,
+        createdByRole: createdByRole,
+      );
+
+  /// Builds a record from the unified backend `/records` JSON shape.
+  factory MedicalRecord.fromApi(Map<String, dynamic> j) {
+    final type = recordTypeFromApi(j['type']?.toString());
+    final rawStatus = j['status']?.toString();
+    final isRx = type == RecordType.prescription;
+    final items = ((j['items'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => {
+              'name': (e['name'] ?? '').toString(),
+              'dosage': (e['dosage'] ?? '').toString(),
+              'frequency': (e['frequency'] ?? '').toString(),
+            })
+        .toList();
+    return MedicalRecord(
+      id: (j['id'] ?? '').toString(),
+      serverId: (j['id'] ?? '').toString(),
+      title: (j['title'] ?? 'Record').toString(),
+      doctorOrFacility: (j['doctor_or_facility'] ?? '').toString(),
+      date: DateTime.tryParse(
+              (j['record_date'] ?? j['created_at'] ?? '').toString()) ??
+          DateTime.now(),
+      type: type,
+      status: isRx ? RecordStatus.stable : recordStatusFromApi(rawStatus),
+      diagnosis: (j['description'] ?? '').toString(),
+      symptoms: const [],
+      treatments: [for (final it in items) it['name'] ?? ''],
+      doctorNotes: (j['doctor_notes'] ?? '').toString(),
+      attachments: ((j['attachments'] as List?) ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      condition: (j['title'] ?? '').toString(),
+      prescriptionStatus: isRx ? (rawStatus ?? 'taking_now') : null,
+      items: items,
+      createdByRole: (j['created_by_role'] ?? 'patient').toString(),
+    );
+  }
+}
+
+// ── Backend <-> frontend mapping helpers ─────────────────────────────────────
+
+RecordType recordTypeFromApi(String? t) {
+  switch (t) {
+    case 'lab_test':     return RecordType.labTest;
+    case 'imaging':      return RecordType.imaging;
+    case 'prescription': return RecordType.prescription;
+    case 'diagnosis':    return RecordType.diagnosis;
+    default:             return RecordType.diagnosis;
+  }
+}
+
+String recordTypeToApi(RecordType t) {
+  switch (t) {
+    case RecordType.labTest:      return 'lab_test';
+    case RecordType.imaging:      return 'imaging';
+    case RecordType.prescription: return 'prescription';
+    case RecordType.diagnosis:    return 'diagnosis';
+    default:                      return 'diagnosis';
+  }
+}
+
+RecordStatus recordStatusFromApi(String? s) {
+  switch (s) {
+    case 'critical': return RecordStatus.critical;
+    case 'pending':  return RecordStatus.pending;
+    default:         return RecordStatus.stable;
+  }
+}
+
+String recordStatusToApi(RecordStatus s) {
+  switch (s) {
+    case RecordStatus.critical: return 'critical';
+    case RecordStatus.pending:  return 'pending';
+    case RecordStatus.stable:   return 'stable';
+  }
+}
+
+/// Prescription status label (id → bilingual).
+const kRxStatuses = <(String, String, String)>[
+  ('taking_now', 'Taking now', 'يتناوله الآن'),
+  ('effective', 'Effective', 'فعّال'),
+  ('not_effective', 'Not effective', 'غير فعّال'),
+];
+
+String rxStatusLabel(String? id, {bool arabic = false}) {
+  for (final s in kRxStatuses) {
+    if (s.$1 == id) return arabic ? s.$3 : s.$2;
+  }
+  return id ?? '';
 }
 
 // ─── Sample data ──────────────────────────────────────────────────────────────

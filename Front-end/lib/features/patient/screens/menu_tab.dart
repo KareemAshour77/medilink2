@@ -7,6 +7,8 @@ import 'chatbot_screen.dart';
 import '../../../l10n/app_localizations.dart';
 import 'profile_edit_screen.dart';
 import 'theme_picker_screen.dart';
+import 'access_requests_screen.dart';
+import 'patient_appointments_screen.dart';
 import 'language_picker_screen.dart';
 import '../../../core/services/session_service.dart';
 import '../../../core/services/location_service.dart';
@@ -49,6 +51,8 @@ class _MenuTabState extends State<MenuTab> {
     // Items built here so they update when language changes
     final items = [
       _MenuItem.icon(Icons.my_location_rounded, l.refreshLocation, const Color(0xFF22C55E), ''),
+      _MenuItem.icon(Icons.event_note_outlined, 'My Appointments', const Color(0xFF0EA5E9), ''),
+      _MenuItem.icon(Icons.privacy_tip_outlined, 'Records access', const Color(0xFF6366F1), ''),
       _MenuItem.icon(Icons.switch_account_rounded, 'Switch account',const Color(0xFF14B8A6), ''),
       _MenuItem.icon(Icons.person_outline_rounded, l.myProfile, const Color(0xFFA855F7), ''),
       _MenuItem.icon(Icons.nightlight_sharp, l.themes, const Color(0xFFF59E0B), ''),
@@ -263,21 +267,35 @@ class _MenuTabState extends State<MenuTab> {
                             // Refresh location
                             _refreshLocation();
                           } else if (i == 1) {
+                            // My Appointments
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        const PatientAppointmentsScreen()));
+                          } else if (i == 2) {
+                            // Medical-records access requests
+                            Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        const AccessRequestsScreen()));
+                          } else if (i == 3) {
                             // Switch / verify another account on this email
                             openAccountSwitcher(context);
-                          } else if (i == 2) {
+                          } else if (i == 4) {
                             // My Profile
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ProfileEditScreen()));
-                          } else if (i == 3) {
+                          } else if (i == 5) {
                             // Themes
                             Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                     builder: (_) => const ThemePickerScreen()));
-                          } else if (i == 4) {
+                          } else if (i == 6) {
                             // Language
                             Navigator.push(
                                 context,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/services/appointment_service.dart';
+import '../../../core/utils/record_labels.dart';
 import 'patient_details_screen.dart';
 
 class DoctorPatients extends StatefulWidget {
@@ -8,41 +10,68 @@ class DoctorPatients extends StatefulWidget {
   State<DoctorPatients> createState() => _DoctorPatientsState();
 }
 
-class _DoctorPatientsState extends State<DoctorPatients>
-    with SingleTickerProviderStateMixin {
+class _DoctorPatientsState extends State<DoctorPatients> {
   final _searchCtrl = TextEditingController();
   final _focusNode  = FocusNode();
   bool _searchFocused = false;
   int _filterIndex = 0;
-  late final TabController _tabCtrl;
 
-  static const _filters = ['All', 'Active', 'Critical', 'Follow-up'];
+  static const _filters = ['All', 'Active', 'Ended'];
 
-  final _patients = [
-    {'name': 'Ahmed Hassan',   'age': '34', 'condition': 'Hypertension',      'status': 'active',   'avatar': 'AH'},
-    {'name': 'Sara Mohamed',   'age': '28', 'condition': 'Diabetes Type 2',   'status': 'critical', 'avatar': 'SM'},
-    {'name': 'Omar Khaled',    'age': '45', 'condition': 'Asthma',            'status': 'follow-up','avatar': 'OK'},
-    {'name': 'Mona Ali',       'age': '52', 'condition': 'Arthritis',         'status': 'critical', 'avatar': 'MA'},
-    {'name': 'Karim Youssef',  'age': '31', 'condition': 'Allergies',         'status': 'active',   'avatar': 'KY'},
-    {'name': 'Layla Ibrahim',  'age': '39', 'condition': 'Migraine',          'status': 'follow-up','avatar': 'LI'},
-    {'name': 'Tarek Mahmoud',  'age': '58', 'condition': 'Heart Disease',     'status': 'critical', 'avatar': 'TM'},
-    {'name': 'Nadia Saleh',    'age': '44', 'condition': 'Thyroid disorder',  'status': 'active',   'avatar': 'NS'},
-  ];
+  // Real patients, connected through confirmed appointments.
+  List<Map<String, String>> _patients = [];
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: _filters.length, vsync: this);
     _focusNode.addListener(() {
       setState(() => _searchFocused = _focusNode.hasFocus);
     });
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final list = await AppointmentService.getDoctorPatients();
+      if (!mounted) return;
+      setState(() {
+        _patients = list.map(_mapPatient).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _loading = false;
+      });
+    }
+  }
+
+  Map<String, String> _mapPatient(Map<String, dynamic> p) {
+    final name = (p['name'] as String?)?.trim().isNotEmpty == true
+        ? p['name'] as String
+        : 'Patient';
+    final parts = name.split(' ');
+    final initials = parts.length >= 2
+        ? '${parts[0][0]}${parts[1][0]}'.toUpperCase()
+        : (name.isNotEmpty ? name[0].toUpperCase() : '?');
+    return {
+      'id':        (p['id'] as String?) ?? '',
+      'name':      name,
+      'age':       (p['gender'] as String?) ?? '',
+      'condition': apptTypeLabelL10n(context.l, p['lastType'] as String?),
+      'status':    (p['chatActive'] == true) ? 'active' : 'ended',
+      'avatar':    initials,
+    };
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
     _focusNode.dispose();
-    _tabCtrl.dispose();
     super.dispose();
   }
 
@@ -60,9 +89,16 @@ class _DoctorPatientsState extends State<DoctorPatients>
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'critical':  return Colors.red;
-      case 'follow-up': return Colors.orange;
-      default:          return Colors.green;
+      case 'ended': return AppColors.grey;
+      default:      return Colors.green;
+    }
+  }
+
+  String _filterLabel(BuildContext context, String f) {
+    switch (f) {
+      case 'Active': return context.l.filterActive;
+      case 'Ended':  return context.l.apptEnded;
+      default:       return context.l.filterAll;
     }
   }
 
@@ -76,10 +112,13 @@ class _DoctorPatientsState extends State<DoctorPatients>
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('My Patients',
+            Text(context.l.myPatients,
                 style: TextStyle(color: context.text, fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
             const SizedBox(height: 4),
-            Text('${_patients.length} patients under care',
+            Text(
+                _loading
+                    ? context.l.loadingDots
+                    : '${_patients.length} ${context.l.patientsUnderCare}',
                 style: const TextStyle(color: AppColors.grey, fontSize: 13)),
             const SizedBox(height: 16),
 
@@ -104,11 +143,11 @@ class _DoctorPatientsState extends State<DoctorPatients>
                 controller: _searchCtrl,
                 focusNode: _focusNode,
                 onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  hintText: 'Search by name or condition…',
-                  prefixIcon: Icon(Icons.search_rounded, color: AppColors.grey, size: 20),
+                decoration: InputDecoration(
+                  hintText: context.l.searchPatients,
+                  prefixIcon: const Icon(Icons.search_rounded, color: AppColors.grey, size: 20),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(vertical: 14),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
             ),
@@ -135,7 +174,7 @@ class _DoctorPatientsState extends State<DoctorPatients>
                           color: sel ? RoleTheme.doctor : context.divider,
                         ),
                       ),
-                      child: Text(_filters[i],
+                      child: Text(_filterLabel(context, _filters[i]),
                           style: TextStyle(
                             color: sel ? Colors.white : AppColors.grey,
                             fontSize: 12,
@@ -151,21 +190,57 @@ class _DoctorPatientsState extends State<DoctorPatients>
         const SizedBox(height: 14),
 
         // ── Patient list ──────────────────────────────────────
-        Expanded(
-          child: filtered.isEmpty
-              ? const Center(child: Text('No patients found', style: TextStyle(color: AppColors.grey)))
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                  itemCount: filtered.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (_, i) => _PatientTile(
-                    patient: filtered[i],
-                    statusColor: _statusColor(filtered[i]['status']!),
-                    index: i,
-                  ),
-                ),
-        ),
+        Expanded(child: _buildList(filtered)),
       ]),
+    );
+  }
+
+  Widget _buildList(List<Map<String, String>> filtered) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_error!, style: const TextStyle(color: AppColors.grey), textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          TextButton(onPressed: _load, child: Text(context.l.retry)),
+        ]),
+      );
+    }
+    if (_patients.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          children: [
+            const SizedBox(height: 120),
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  context.l.noPatientsYet,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppColors.grey),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (filtered.isEmpty) {
+      return Center(child: Text(context.l.noRecordsFound, style: const TextStyle(color: AppColors.grey)));
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        itemCount: filtered.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, i) => _PatientTile(
+          patient: filtered[i],
+          statusColor: _statusColor(filtered[i]['status']!),
+          index: i,
+        ),
+      ),
     );
   }
 }

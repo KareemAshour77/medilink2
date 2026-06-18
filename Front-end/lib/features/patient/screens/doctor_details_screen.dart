@@ -13,6 +13,8 @@ import '../../../core/services/fcm_service.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/session_service.dart';
 import '../../../core/services/appointment_service.dart';
+import '../../../core/services/availability_service.dart';
+import '../../../core/utils/record_labels.dart';
 import '../../../core/widgets/chat_widgets.dart';
 import '../../../data/records_data.dart';
 
@@ -149,7 +151,7 @@ class DoctorDetailsScreen extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: () => _openChat(context),
                   icon: const Icon(Icons.chat_bubble_outline_rounded),
-                  label: const Text('Chat Now'),
+                  label: Text(context.l.btnChatNow),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.primary,
                     side: const BorderSide(color: AppColors.primary, width: 1.8),
@@ -661,17 +663,65 @@ class _BookingSheet extends StatefulWidget {
 }
 
 class _BookingSheetState extends State<_BookingSheet> {
+  // Step 0 = pick type, Step 1 = pick date + slot.
+  int _step = 0;
   String? _selected;
   bool _loading = false;
+
+  // Date + slots.
+  late DateTime _selectedDate = DateTime.now();
+  bool _slotsLoading = false;
+  bool _configured = true;
+  List<Map<String, dynamic>> _slots = [];
+  String? _selectedSlotIso;
+
+  String _fmtDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _goToSlots() async {
+    if (_selected == null) return;
+    setState(() => _step = 1);
+    await _loadSlots();
+  }
+
+  Future<void> _loadSlots() async {
+    setState(() {
+      _slotsLoading = true;
+      _selectedSlotIso = null;
+    });
+    try {
+      final res = await AvailabilityService.getSlots(
+        widget.doctorId,
+        _fmtDate(_selectedDate),
+      );
+      if (!mounted) return;
+      setState(() {
+        _configured = res['configured'] == true;
+        _slots = (res['slots'] as List).cast<Map<String, dynamic>>();
+        _slotsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _slots = [];
+        _slotsLoading = false;
+      });
+    }
+  }
 
   Future<void> _book() async {
     if (_selected == null) return;
     setState(() => _loading = true);
     try {
-      await AppointmentService.book(doctorId: widget.doctorId, type: _selected!);
+      await AppointmentService.book(
+        doctorId: widget.doctorId,
+        type: _selected!,
+        scheduledAt: _selectedSlotIso,
+      );
       if (!mounted) return;
       Navigator.pop(context);
-      AppSnackBar.show(context, 'Request sent to ${widget.doctorName}!', backgroundColor: AppColors.primary);
+      AppSnackBar.show(context, '${context.l.requestSentTo} ${widget.doctorName}',
+          backgroundColor: AppColors.primary);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -701,49 +751,174 @@ class _BookingSheetState extends State<_BookingSheet> {
               ),
             ),
             const SizedBox(height: 20),
+            Row(children: [
+              if (_step == 1)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.arrow_back_ios_new_rounded,
+                      size: 18, color: context.text),
+                  onPressed: () => setState(() => _step = 0),
+                ),
+              Expanded(
+                child: Text(
+                  _step == 0 ? context.l.bookAppointment : context.l.chooseTime,
+                  style: TextStyle(
+                      color: context.text, fontSize: 20, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerLeft,
-              child: Text('Book Appointment',
-                  style: TextStyle(color: context.text, fontSize: 20, fontWeight: FontWeight.w800)),
-            ),
-            const SizedBox(height: 4),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Select appointment type',
-                  style: TextStyle(color: AppColors.grey, fontSize: 13)),
+              child: Text(
+                _step == 0
+                    ? context.l.selectAppointmentType
+                    : apptTypeLabelL10n(context.l, _selected),
+                style: const TextStyle(color: AppColors.grey, fontSize: 13),
+              ),
             ),
             const SizedBox(height: 20),
-            for (final t in _kApptTypes)
-              _TypeCard(
-                type: t,
-                selected: _selected == t.title,
-                onTap: () => setState(() => _selected = t.title),
-              ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton(
-                onPressed: _selected == null || _loading ? null : _book,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  disabledBackgroundColor: AppColors.primary.withOpacity(0.4),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-                  elevation: 0,
-                ),
-                child: _loading
-                    ? const SizedBox(
-                        width: 22, height: 22,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                    : const Text('Book',
-                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-              ),
-            ),
+            if (_step == 0) ..._buildTypeStep() else ..._buildSlotStep(),
             SizedBox(height: MediaQuery.of(context).viewInsets.bottom + 16),
           ],
         ),
       ),
     );
+  }
+
+  List<Widget> _buildTypeStep() => [
+        for (final t in _kApptTypes)
+          _TypeCard(
+            type: t,
+            selected: _selected == t.title,
+            onTap: () => setState(() => _selected = t.title),
+          ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: ElevatedButton(
+            onPressed: _selected == null ? null : _goToSlots,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              disabledBackgroundColor: AppColors.primary.withOpacity(0.4),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              elevation: 0,
+            ),
+            child: Text(context.l.continueLabel,
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+          ),
+        ),
+      ];
+
+  List<Widget> _buildSlotStep() {
+    return [
+      // Horizontal 14-day date strip.
+      SizedBox(
+        height: 78,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: 14,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) {
+            final day = DateTime.now().add(Duration(days: i));
+            final sel = _fmtDate(day) == _fmtDate(_selectedDate);
+            const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            return GestureDetector(
+              onTap: () {
+                setState(() => _selectedDate = day);
+                _loadSlots();
+              },
+              child: Container(
+                width: 56,
+                decoration: BoxDecoration(
+                  color: sel ? AppColors.primary : context.bg,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: sel ? AppColors.primary : context.divider),
+                ),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(wd[day.weekday - 1],
+                      style: TextStyle(
+                          color: sel ? Colors.white : AppColors.grey,
+                          fontSize: 11, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text('${day.day}',
+                      style: TextStyle(
+                          color: sel ? Colors.white : context.text,
+                          fontSize: 18, fontWeight: FontWeight.w800)),
+                ]),
+              ),
+            );
+          },
+        ),
+      ),
+      const SizedBox(height: 16),
+      if (_slotsLoading)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: CircularProgressIndicator(),
+        )
+      else if (!_configured)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 8),
+          child: Text(
+            context.l.doctorNoAvailability,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.grey, fontSize: 13),
+          ),
+        )
+      else if (_slots.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Text(context.l.noSlotsAvailable,
+              style: const TextStyle(color: AppColors.grey, fontSize: 13)),
+        )
+      else
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _slots.map((s) {
+            final iso = s['start'] as String;
+            final label = s['label'] as String? ?? '';
+            final sel = _selectedSlotIso == iso;
+            return GestureDetector(
+              onTap: () => setState(() => _selectedSlotIso = iso),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: sel ? AppColors.primary : context.bg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: sel ? AppColors.primary : context.divider),
+                ),
+                child: Text(label,
+                    style: TextStyle(
+                        color: sel ? Colors.white : context.text,
+                        fontSize: 13, fontWeight: FontWeight.w600)),
+              ),
+            );
+          }).toList(),
+        ),
+      const SizedBox(height: 18),
+      SizedBox(
+        width: double.infinity,
+        height: 54,
+        child: ElevatedButton(
+          onPressed: (_selectedSlotIso == null || _loading) ? null : _book,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            disabledBackgroundColor: AppColors.primary.withOpacity(0.4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+            elevation: 0,
+          ),
+          child: _loading
+              ? const SizedBox(
+                  width: 22, height: 22,
+                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+              : Text(context.l.requestAppointment,
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        ),
+      ),
+    ];
   }
 }
 
@@ -784,7 +959,7 @@ class _TypeCard extends StatelessWidget {
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(type.title,
+              Text(apptTypeLabelL10n(context.l, type.title),
                   style: TextStyle(color: context.text, fontWeight: FontWeight.w700, fontSize: 14)),
               const SizedBox(height: 3),
               Text(type.subtitle, style: const TextStyle(color: AppColors.grey, fontSize: 12)),

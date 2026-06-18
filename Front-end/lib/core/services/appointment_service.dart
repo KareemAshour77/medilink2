@@ -13,6 +13,7 @@ class AppointmentService {
   static Future<Map<String, dynamic>> book({
     required String doctorId,
     required String type,
+    String? scheduledAt, // ISO datetime of the chosen slot (optional)
   }) async {
     final token = await ApiService.getToken();
     final res = await http
@@ -22,7 +23,11 @@ class AppointmentService {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({'doctorId': doctorId, 'type': type}),
+          body: jsonEncode({
+            'doctorId': doctorId,
+            'type': type,
+            if (scheduledAt != null) 'scheduledAt': scheduledAt,
+          }),
         )
         .timeout(const Duration(seconds: 12));
     if (res.statusCode == 200 || res.statusCode == 201) {
@@ -36,6 +41,38 @@ class AppointmentService {
       if (raw is List && raw.isNotEmpty) msg = raw.first.toString();
     } catch (_) {}
     throw Exception(msg);
+  }
+
+  // Patient: my own appointments (with doctor info + status + scheduledAt).
+  static Future<List<Map<String, dynamic>>> getMine() async {
+    final token = await ApiService.getToken();
+    final res = await http
+        .get(
+          Uri.parse('${ApiService.baseUrl}$_path/mine'),
+          headers: {'Authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body);
+      if (body is List) return body.cast<Map<String, dynamic>>();
+    }
+    throw Exception(_errMsg(res.statusCode, res.body));
+  }
+
+  // Doctor: distinct patients connected through confirmed appointments.
+  static Future<List<Map<String, dynamic>>> getDoctorPatients() async {
+    final token = await ApiService.getToken();
+    final res = await http
+        .get(
+          Uri.parse('${ApiService.baseUrl}$_path/patients'),
+          headers: {'Authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body);
+      if (body is List) return body.cast<Map<String, dynamic>>();
+    }
+    throw Exception(_errMsg(res.statusCode, res.body));
   }
 
   static Future<List<Map<String, dynamic>>> getMyAppointments() async {

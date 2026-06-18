@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_config.dart';
 
 /// Talks to the FastAPI security backend (port 8080).
 /// Handles: secure auth, access control, emergency access, AI chat.
 class SecurityApiService {
-  static const String baseUrl = 'http://192.168.1.20:8080';
+  // Resolved at runtime from AppConfig (default port 8080). Override with
+  // --dart-define=SECURITY_BASE_URL=... or SECURITY_PORT/APP_ENV/PC_IP.
+  static String get baseUrl => AppConfig.securityBaseUrl;
   static const Duration _timeout = Duration(seconds: 10);
 
   // ── Token helpers ────────────────────────────────────────────────────────────
