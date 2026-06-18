@@ -4,8 +4,12 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_snack_bar.dart';
 import '../../../core/services/appointment_service.dart';
 import '../../../core/services/chat_api_service.dart';
-import '../../../data/records_data.dart';
+import '../../../core/services/record_access_service.dart';
+import '../../../core/services/records_service.dart';
+import '../../../core/utils/record_labels.dart';
 import 'doctor_chat_screen.dart';
+import 'record_details_sheet.dart';
+import '../../patient/screens/add_record_screen.dart';
 
 class DoctorAppointments extends StatefulWidget {
   const DoctorAppointments({super.key});
@@ -36,14 +40,14 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
     }
   }
 
-  Future<void> _accept(int i) async {
-    final id = _appts[i]['id'] as String? ?? '';
-    setState(() => _appts[i]['status'] = 'confirmed');
+  Future<void> _accept(Map<String, dynamic> appt) async {
+    final id = appt['id'] as String? ?? '';
+    setState(() => appt['status'] = 'confirmed');
     try {
       await AppointmentService.accept(id);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _appts[i]['status'] = 'pending');
+      setState(() => appt['status'] = 'pending');
       final msg = e.toString().replaceFirst('Exception: ', '');
       AppSnackBar.show(context, 'Accept failed: $msg');
       // If the appointment no longer exists on the server, reload to drop stale rows.
@@ -51,17 +55,43 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
     }
   }
 
-  Future<void> _reject(int i) async {
-    final id = _appts[i]['id'] as String? ?? '';
-    setState(() => _appts[i]['status'] = 'rejected');
+  Future<void> _reject(Map<String, dynamic> appt) async {
+    final id = appt['id'] as String? ?? '';
+    setState(() => appt['status'] = 'rejected');
     try {
       await AppointmentService.reject(id);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _appts[i]['status'] = 'pending');
+      setState(() => appt['status'] = 'pending');
       final msg = e.toString().replaceFirst('Exception: ', '');
       AppSnackBar.show(context, 'Reject failed: $msg');
       if (msg.contains('not found') || msg == '404') _load();
+    }
+  }
+
+  // ── Schedule filter ────────────────────────────────────────────────────────
+  String _filter = 'All';
+  static const _filters = ['All', 'Today', 'Pending', 'Confirmed'];
+
+  bool _isToday(Map<String, dynamic> a) {
+    final raw = a['scheduledAt'] ?? a['createdAt'];
+    final d = DateTime.tryParse(raw?.toString() ?? '');
+    if (d == null) return false;
+    final now = DateTime.now();
+    final local = d.toLocal();
+    return local.year == now.year && local.month == now.month && local.day == now.day;
+  }
+
+  List<Map<String, dynamic>> get _visible {
+    switch (_filter) {
+      case 'Today':
+        return _appts.where(_isToday).toList();
+      case 'Pending':
+        return _appts.where((a) => a['status'] == 'pending' && a['endedAt'] == null).toList();
+      case 'Confirmed':
+        return _appts.where((a) => a['status'] == 'confirmed' && a['endedAt'] == null).toList();
+      default:
+        return _appts;
     }
   }
 
@@ -136,8 +166,63 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
     }
   }
 
-  void _viewRecords(Map<String, dynamic> appt) {
+  // Gated by the 15-minute medical-record access flow: the doctor only sees
+  // records once the patient has approved a live access request.
+  Future<void> _viewRecords(Map<String, dynamic> appt) async {
+    final patientId = appt['patientId'] as String? ?? '';
     final patientName = appt['patientName'] as String? ?? 'Patient';
+    if (patientId.isEmpty) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final granted = await RecordAccessService.check(patientId);
+      if (!granted) {
+        await RecordAccessService.request(patientId);
+        if (!mounted) return;
+        Navigator.pop(context); // loader
+        _showAccessPending(appt);
+        return;
+      }
+      final entries = await RecordsService.forPatient(patientId);
+      if (!mounted) return;
+      Navigator.pop(context); // loader
+      _showRecordsSheet(patientName, entries);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // loader
+      AppSnackBar.show(context, e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  void _showAccessPending(Map<String, dynamic> appt) {
+    final l = context.l;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(l.accessRequestSent),
+        content: Text(l.waitingPatientApproval),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l.ok),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _viewRecords(appt);
+            },
+            child: Text(l.viewRecords),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRecordsSheet(String patientName, List<Map<String, dynamic>> entries) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -152,6 +237,25 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
         expand: false,
         builder: (_, ctrl) => _RecordsSheet(
           scrollController: ctrl,
+          patientName: patientName,
+          entries: entries,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _createPrescription(Map<String, dynamic> appt) async {
+    final patientId = appt['patientId'] as String? ?? '';
+    final patientName = appt['patientName'] as String? ?? 'Patient';
+    if (patientId.isEmpty) return;
+    // Reuse the patient Add-Record UI, locked to Prescription. Saves through the
+    // unified records system so it appears in the patient's medical records.
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddRecordScreen(
+          prescriptionOnly: true,
+          patientId: patientId,
           patientName: patientName,
         ),
       ),
@@ -168,7 +272,7 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
           child: Row(children: [
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Schedule',
+                Text(context.l.schedule,
                     style: TextStyle(
                         color: context.text,
                         fontSize: 24,
@@ -176,7 +280,9 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
                         letterSpacing: -0.5)),
                 const SizedBox(height: 4),
                 Text(
-                  _loading ? 'Loading…' : '$pending pending approvals',
+                  _loading
+                      ? context.l.loadingDots
+                      : '$pending ${context.l.pendingApprovals}',
                   style: const TextStyle(color: AppColors.grey, fontSize: 13),
                 ),
               ]),
@@ -188,8 +294,53 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
             ),
           ]),
         ),
+        if (!_loading && _error == null && _appts.isNotEmpty) _buildFilterChips(),
         Expanded(child: _buildBody()),
       ]),
+    );
+  }
+
+  String _filterLabel(BuildContext context, String f) {
+    final l = context.l;
+    switch (f) {
+      case 'Today':     return l.filterToday;
+      case 'Pending':   return l.apptPending;
+      case 'Confirmed': return l.apptConfirmed;
+      default:          return l.filterAll;
+    }
+  }
+
+  Widget _buildFilterChips() {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+        itemCount: _filters.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final f = _filters[i];
+          final sel = f == _filter;
+          return GestureDetector(
+            onTap: () => setState(() => _filter = f),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: sel ? RoleTheme.doctor : context.card,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: sel ? RoleTheme.doctor : context.divider),
+              ),
+              child: Text(_filterLabel(context, f),
+                  style: TextStyle(
+                    color: sel ? Colors.white : AppColors.grey,
+                    fontSize: 12,
+                    fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                  )),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -205,18 +356,31 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
       );
     }
     if (_appts.isEmpty) {
-      return const Center(
-        child: Text('No appointments yet.', style: TextStyle(color: AppColors.grey)),
+      return Center(
+        child: Text(context.l.noAppointmentsYet, style: const TextStyle(color: AppColors.grey)),
+      );
+    }
+    final visible = _visible;
+    if (visible.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(children: [
+          const SizedBox(height: 120),
+          Center(
+            child: Text(context.l.noAppointmentsYet,
+                style: const TextStyle(color: AppColors.grey)),
+          ),
+        ]),
       );
     }
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        itemCount: _appts.length,
+        itemCount: visible.length,
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (_, i) {
-          final appt = _appts[i];
+          final appt = visible[i];
           return Dismissible(
             key: ValueKey(appt['id']),
             direction: DismissDirection.horizontal,
@@ -227,10 +391,11 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
             child: _ApptCard(
               data: appt,
               index: i,
-              onAccept: () => _accept(i),
-              onReject: () => _reject(i),
+              onAccept: () => _accept(appt),
+              onReject: () => _reject(appt),
               onChat: () => _chatWithPatient(appt),
               onRecords: () => _viewRecords(appt),
+              onPrescribe: () => _createPrescription(appt),
             ),
           );
         },
@@ -243,7 +408,7 @@ class _DoctorAppointmentsState extends State<DoctorAppointments> {
 
 class _ApptCard extends StatefulWidget {
   final Map<String, dynamic> data;
-  final VoidCallback onAccept, onReject, onChat, onRecords;
+  final VoidCallback onAccept, onReject, onChat, onRecords, onPrescribe;
   final int index;
 
   const _ApptCard({
@@ -252,6 +417,7 @@ class _ApptCard extends StatefulWidget {
     required this.onReject,
     required this.onChat,
     required this.onRecords,
+    required this.onPrescribe,
     required this.index,
   });
 
@@ -308,6 +474,18 @@ class _ApptCardState extends State<_ApptCard> with SingleTickerProviderStateMixi
     return name.isNotEmpty ? name[0].toUpperCase() : '?';
   }
 
+  // 'Mon 17 Jun · 14:30' from an ISO scheduledAt, or '' if not scheduled.
+  String _formatSchedule(dynamic raw) {
+    final d = DateTime.tryParse(raw?.toString() ?? '')?.toLocal();
+    if (d == null) return '';
+    const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final hh = d.hour.toString().padLeft(2, '0');
+    final mm = d.minute.toString().padLeft(2, '0');
+    return '${wd[d.weekday - 1]} ${d.day} ${mo[d.month - 1]} · $hh:$mm';
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = widget.data['status'] as String? ?? 'pending';
@@ -315,7 +493,7 @@ class _ApptCardState extends State<_ApptCard> with SingleTickerProviderStateMixi
         ?? widget.data['name'] as String?
         ?? 'Patient';
     final avatar = widget.data['avatar'] as String? ?? _initials(name);
-    final time = widget.data['time'] as String? ?? '';
+    final time = _formatSchedule(widget.data['scheduledAt']);
     final type = widget.data['type'] as String? ?? '';
     final isPending = status == 'pending' && !_ended;
     final isConfirmed = status == 'confirmed' && !_ended;
@@ -361,7 +539,10 @@ class _ApptCardState extends State<_ApptCard> with SingleTickerProviderStateMixi
                               color: context.text, fontWeight: FontWeight.w700, fontSize: 14)),
                       const SizedBox(height: 3),
                       Text(
-                        [if (time.isNotEmpty) time, if (type.isNotEmpty) type].join('  ·  '),
+                        [
+                          if (time.isNotEmpty) time,
+                          if (type.isNotEmpty) apptTypeLabelL10n(context.l, type),
+                        ].join('  ·  '),
                         style: const TextStyle(color: AppColors.grey, fontSize: 12),
                       ),
                     ]),
@@ -381,7 +562,7 @@ class _ApptCardState extends State<_ApptCard> with SingleTickerProviderStateMixi
                         duration: const Duration(milliseconds: 300),
                         style: TextStyle(
                             color: _statusColor, fontSize: 10, fontWeight: FontWeight.w700),
-                        child: Text(_displayStatus),
+                        child: Text(apptStatusLabelL10n(context.l, _displayStatus)),
                       ),
                     ]),
                   ),
@@ -396,14 +577,14 @@ class _ApptCardState extends State<_ApptCard> with SingleTickerProviderStateMixi
                           padding: const EdgeInsets.only(top: 12),
                           child: Row(children: [
                             Expanded(child: _TapBtn(
-                              label: 'Reject',
+                              label: context.l.reject,
                               color: Colors.red,
                               outlined: true,
                               onTap: widget.onReject,
                             )),
                             const SizedBox(width: 10),
                             Expanded(child: _TapBtn(
-                              label: 'Accept',
+                              label: context.l.approve,
                               color: RoleTheme.doctor,
                               outlined: false,
                               onTap: widget.onAccept,
@@ -413,22 +594,32 @@ class _ApptCardState extends State<_ApptCard> with SingleTickerProviderStateMixi
                       : isConfirmed
                           ? Padding(
                               padding: const EdgeInsets.only(top: 12),
-                              child: Row(children: [
-                                Expanded(child: _TapBtn(
-                                  label: 'View Records',
-                                  icon: Icons.folder_outlined,
+                              child: Column(children: [
+                                Row(children: [
+                                  Expanded(child: _TapBtn(
+                                    label: context.l.viewRecords,
+                                    icon: Icons.folder_outlined,
+                                    color: RoleTheme.doctor,
+                                    outlined: true,
+                                    onTap: widget.onRecords,
+                                  )),
+                                  const SizedBox(width: 10),
+                                  Expanded(child: _TapBtn(
+                                    label: context.l.btnChatNow,
+                                    icon: Icons.chat_bubble_outline_rounded,
+                                    color: RoleTheme.doctor,
+                                    outlined: false,
+                                    onTap: widget.onChat,
+                                  )),
+                                ]),
+                                const SizedBox(height: 10),
+                                _TapBtn(
+                                  label: context.l.createPrescription,
+                                  icon: Icons.receipt_long_outlined,
                                   color: RoleTheme.doctor,
                                   outlined: true,
-                                  onTap: widget.onRecords,
-                                )),
-                                const SizedBox(width: 10),
-                                Expanded(child: _TapBtn(
-                                  label: 'Chat Now',
-                                  icon: Icons.chat_bubble_outline_rounded,
-                                  color: RoleTheme.doctor,
-                                  outlined: false,
-                                  onTap: widget.onChat,
-                                )),
+                                  onTap: widget.onPrescribe,
+                                ),
                               ]),
                             )
                           : const SizedBox.shrink(),
@@ -506,11 +697,33 @@ class _TapBtnState extends State<_TapBtn> {
 class _RecordsSheet extends StatelessWidget {
   final ScrollController scrollController;
   final String patientName;
+  final List<Map<String, dynamic>> entries;
 
-  const _RecordsSheet({required this.scrollController, required this.patientName});
+  const _RecordsSheet({
+    required this.scrollController,
+    required this.patientName,
+    required this.entries,
+  });
+
+  String _fmtDate(dynamic raw) {
+    final d = DateTime.tryParse(raw?.toString() ?? '');
+    if (d == null) return '';
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
+  IconData _iconFor(String type) {
+    switch (type) {
+      case 'prescription': return Icons.receipt_long_outlined;
+      case 'lab_test':     return Icons.biotech_outlined;
+      case 'imaging':      return Icons.document_scanner_outlined;
+      case 'diagnosis':    return Icons.medical_information_outlined;
+      default:             return Icons.description_outlined;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final l = context.l;
     return Column(children: [
       const SizedBox(height: 12),
       Container(
@@ -528,7 +741,7 @@ class _RecordsSheet extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '$patientName — Records',
+              '$patientName — ${l.records}',
               style: TextStyle(
                   color: context.text, fontSize: 16, fontWeight: FontWeight.w700),
             ),
@@ -537,43 +750,64 @@ class _RecordsSheet extends StatelessWidget {
       ),
       const Divider(height: 1),
       Expanded(
-        child: ListView.builder(
-          controller: scrollController,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: sampleRecords.length,
-          itemBuilder: (_, i) {
-            final rec = sampleRecords[i];
-            final statusColor = rec.status == RecordStatus.critical ? Colors.red : Colors.green;
-            return ListTile(
-              leading: Container(
-                width: 42, height: 42,
-                decoration: BoxDecoration(
-                  color: RoleTheme.doctor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(11),
+        child: entries.isEmpty
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Text(l.noRecordsForPatient,
+                      style: const TextStyle(color: AppColors.grey)),
                 ),
-                child: const Icon(Icons.description_outlined, color: RoleTheme.doctor, size: 20),
+              )
+            : ListView.builder(
+                controller: scrollController,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: entries.length,
+                itemBuilder: (_, i) => _tile(context, entries[i]),
               ),
-              title: Text(rec.title,
-                  style: TextStyle(
-                      color: context.text, fontWeight: FontWeight.w600, fontSize: 14)),
-              subtitle: Text(
-                '${rec.typeLabel}  •  ${rec.date.day}/${rec.date.month}/${rec.date.year}',
-                style: const TextStyle(color: AppColors.grey, fontSize: 12),
-              ),
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(rec.statusLabel,
-                    style: TextStyle(
-                        color: statusColor, fontSize: 10, fontWeight: FontWeight.w700)),
-              ),
-            );
-          },
-        ),
       ),
     ]);
+  }
+
+  Widget _tile(BuildContext context, Map<String, dynamic> rec) {
+    final l = context.l;
+    final type = rec['type'] as String? ?? '';
+    final isRx = type == 'prescription';
+    final status = rec['status'] as String? ?? '';
+    final items = (rec['items'] as List?) ?? const [];
+    final title = isRx && items.isNotEmpty
+        ? '${rec['title'] ?? l.recordTypePrescription} (${items.length})'
+        : (rec['title'] as String? ?? l.recordDetails);
+    return ListTile(
+      onTap: () => showRecordDetailsSheet(context, rec),
+      leading: Container(
+        width: 42, height: 42,
+        decoration: BoxDecoration(
+          color: RoleTheme.doctor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(11),
+        ),
+        child: Icon(_iconFor(type), color: RoleTheme.doctor, size: 20),
+      ),
+      title: Text(title,
+          style: TextStyle(color: context.text, fontWeight: FontWeight.w600, fontSize: 14)),
+      subtitle: Text(
+        '${recordTypeLabelL10n(l, type)}  •  ${_fmtDate(rec['record_date'] ?? rec['created_at'])}',
+        style: const TextStyle(color: AppColors.grey, fontSize: 12),
+      ),
+      // Prescription status is READ-ONLY for the doctor (only the patient edits it).
+      trailing: isRx && status.isNotEmpty
+          ? Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: RoleTheme.doctor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                rxStatusLabelL10n(l, status),
+                style: const TextStyle(
+                    color: RoleTheme.doctor, fontSize: 10, fontWeight: FontWeight.w700),
+              ),
+            )
+          : null,
+    );
   }
 }

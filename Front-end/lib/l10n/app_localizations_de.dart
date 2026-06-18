@@ -1005,4 +1005,310 @@ class AppLocalizationsDe extends AppLocalizations {
   String start(Object date) {
     return 'Start: $date';
   }
+
+  @override
+  String get recordTypeLab => 'Lab Test';
+
+  @override
+  String get recordTypeImaging => 'Imaging';
+
+  @override
+  String get recordTypePrescription => 'Prescription';
+
+  @override
+  String get recordTypeDiagnosis => 'Diagnosis';
+
+  @override
+  String get rxTakingNow => 'Taking now';
+
+  @override
+  String get rxEffective => 'Effective';
+
+  @override
+  String get rxNotEffective => 'Not effective';
+
+  @override
+  String get apptPending => 'Pending';
+
+  @override
+  String get apptConfirmed => 'Confirmed';
+
+  @override
+  String get apptRejected => 'Rejected';
+
+  @override
+  String get apptEnded => 'Ended';
+
+  @override
+  String get apptFollowUp => 'Follow-Up';
+
+  @override
+  String get apptCheckUp => 'Check-Up';
+
+  @override
+  String get apptConsultation => 'Consultation';
+
+  @override
+  String get viewRecords => 'View Records';
+
+  @override
+  String get btnChatNow => 'Chat Now';
+
+  @override
+  String get createPrescription => 'Create Prescription';
+
+  @override
+  String get approve => 'Approve';
+
+  @override
+  String get reject => 'Reject';
+
+  @override
+  String get updateStatus => 'Update Status';
+
+  @override
+  String get addRecord => 'Add Record';
+
+  @override
+  String get addLabel => 'Add';
+
+  @override
+  String get continueLabel => 'Continue';
+
+  @override
+  String get retry => 'Retry';
+
+  @override
+  String get loadingDots => 'Loading…';
+
+  @override
+  String get recordTypeLabel => 'Record Type';
+
+  @override
+  String get notesDescriptionOptional => 'Notes / Description (optional)';
+
+  @override
+  String get doctorNotesOptional => 'Doctor Notes (optional)';
+
+  @override
+  String get medications => 'Medications';
+
+  @override
+  String get drugName => 'Drug name';
+
+  @override
+  String get dosageHint => 'Dosage (e.g. 500mg)';
+
+  @override
+  String get frequencyHint => 'Frequency (e.g. 2x/day)';
+
+  @override
+  String get medicationStatus => 'Medication Status';
+
+  @override
+  String get tapToUpdateStatus => 'Tap to update how this medication is working for you.';
+
+  @override
+  String get addMedicationFirst => 'Add at least one medication.';
+
+  @override
+  String get recordSaved => 'Record saved';
+
+  @override
+  String get recordDetails => 'Record Details';
+
+  @override
+  String get noRecordsForPatient => 'No records for this patient yet.';
+
+  @override
+  String get noRecordsFound => 'No records found';
+
+  @override
+  String get forPatient => 'For';
+
+  @override
+  String get recordsAccess => 'Records access';
+
+  @override
+  String get accessRequested => 'Access requested';
+
+  @override
+  String get accessRequestSent => 'Access request sent';
+
+  @override
+  String get waitingPatientApproval => 'They have 15 minutes to approve. Tap View again once approved.';
+
+  @override
+  String get accessGranted => 'Access granted';
+
+  @override
+  String get requestRejected => 'Request rejected';
+
+  @override
+  String get accessExpired => 'This access request has expired';
+
+  @override
+  String get wantsToViewRecords => 'Wants to view your medical records.';
+
+  @override
+  String get noPendingAccess => 'No pending requests. When a doctor asks to view your medical records, the request appears here.';
+
+  @override
+  String get expiresInLabel => 'expires in';
+
+  @override
+  String get minutesShort => 'min';
+
+  @override
+  String get ok => 'OK';
+
+  @override
+  String get dashboard => 'Dashboard';
+
+  @override
+  String get navPatients => 'Patients';
+
+  @override
+  String get navChat => 'Chat';
+
+  @override
+  String get navProfile => 'Profile';
+
+  @override
+  String get todaysPatients => 'Today\'s Patients';
+
+  @override
+  String get upcomingAppointments => 'Upcoming Appointments';
+
+  @override
+  String get noUpcomingAppointments => 'No upcoming appointments';
+
+  @override
+  String get goodMorning => 'Good morning';
+
+  @override
+  String get goodAfternoon => 'Good afternoon';
+
+  @override
+  String get goodEvening => 'Good evening';
+
+  @override
+  String get drPrefix => 'Dr.';
+
+  @override
+  String get couldNotLoadData => 'Could not load data';
+
+  @override
+  String get patientInformation => 'Patient Information';
+
+  @override
+  String get appointmentsLabel => 'Appointments';
+
+  @override
+  String get lastAppointment => 'Last appointment';
+
+  @override
+  String get nextAppointment => 'Next appointment';
+
+  @override
+  String get chatAfterApproval => 'Chat is available after appointment approval';
+
+  @override
+  String get conditionLabel => 'Condition';
+
+  @override
+  String get ageLabel => 'Age';
+
+  @override
+  String get noAppointmentsFound => 'No appointments found';
+
+  @override
+  String get startChat => 'Chat Now';
+
+  @override
+  String get schedule => 'Schedule';
+
+  @override
+  String get pendingApprovals => 'pending approvals';
+
+  @override
+  String get filterAll => 'All';
+
+  @override
+  String get filterActive => 'Active';
+
+  @override
+  String get filterToday => 'Today';
+
+  @override
+  String get noAppointmentsYet => 'No appointments yet.';
+
+  @override
+  String get myAppointments => 'My Appointments';
+
+  @override
+  String get myPatients => 'My Patients';
+
+  @override
+  String get patientsUnderCare => 'under care';
+
+  @override
+  String get searchPatients => 'Search by name or condition…';
+
+  @override
+  String get noPatientsYet => 'No patients yet. Patients appear here after you approve their appointment.';
+
+  @override
+  String get availability => 'Availability';
+
+  @override
+  String get workingDays => 'Working days';
+
+  @override
+  String get workingHours => 'Working hours';
+
+  @override
+  String get slotDuration => 'Slot duration';
+
+  @override
+  String get dailyBreak => 'Daily break';
+
+  @override
+  String get saveAvailability => 'Save availability';
+
+  @override
+  String get availabilitySaved => 'Availability saved';
+
+  @override
+  String get startLabel => 'Start';
+
+  @override
+  String get endLabel => 'End';
+
+  @override
+  String get breakStart => 'Break start';
+
+  @override
+  String get breakEnd => 'Break end';
+
+  @override
+  String get bookAppointment => 'Book Appointment';
+
+  @override
+  String get selectAppointmentType => 'Select appointment type';
+
+  @override
+  String get chooseTime => 'Choose a time';
+
+  @override
+  String get requestAppointment => 'Request Appointment';
+
+  @override
+  String get noSlotsAvailable => 'No available slots on this day.';
+
+  @override
+  String get doctorNoAvailability => 'This doctor has not set their availability yet. Please check back later.';
+
+  @override
+  String get requestSentTo => 'Request sent to';
 }

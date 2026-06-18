@@ -1005,4 +1005,310 @@ class AppLocalizationsAr extends AppLocalizations {
   String start(Object date) {
     return 'البداية : $date';
   }
+
+  @override
+  String get recordTypeLab => 'تحليل';
+
+  @override
+  String get recordTypeImaging => 'أشعة';
+
+  @override
+  String get recordTypePrescription => 'روشتة';
+
+  @override
+  String get recordTypeDiagnosis => 'تشخيص';
+
+  @override
+  String get rxTakingNow => 'يتناوله الآن';
+
+  @override
+  String get rxEffective => 'فعّال';
+
+  @override
+  String get rxNotEffective => 'غير فعّال';
+
+  @override
+  String get apptPending => 'قيد الانتظار';
+
+  @override
+  String get apptConfirmed => 'مؤكد';
+
+  @override
+  String get apptRejected => 'مرفوض';
+
+  @override
+  String get apptEnded => 'منتهي';
+
+  @override
+  String get apptFollowUp => 'متابعة';
+
+  @override
+  String get apptCheckUp => 'كشف';
+
+  @override
+  String get apptConsultation => 'استشارة';
+
+  @override
+  String get viewRecords => 'عرض السجلات';
+
+  @override
+  String get btnChatNow => 'محادثة الآن';
+
+  @override
+  String get createPrescription => 'إنشاء روشتة';
+
+  @override
+  String get approve => 'موافقة';
+
+  @override
+  String get reject => 'رفض';
+
+  @override
+  String get updateStatus => 'تحديث الحالة';
+
+  @override
+  String get addRecord => 'إضافة سجل';
+
+  @override
+  String get addLabel => 'إضافة';
+
+  @override
+  String get continueLabel => 'متابعة';
+
+  @override
+  String get retry => 'إعادة المحاولة';
+
+  @override
+  String get loadingDots => 'جارٍ التحميل…';
+
+  @override
+  String get recordTypeLabel => 'نوع السجل';
+
+  @override
+  String get notesDescriptionOptional => 'ملاحظات / وصف (اختياري)';
+
+  @override
+  String get doctorNotesOptional => 'ملاحظات الطبيب (اختياري)';
+
+  @override
+  String get medications => 'الأدوية';
+
+  @override
+  String get drugName => 'اسم الدواء';
+
+  @override
+  String get dosageHint => 'الجرعة (مثال: 500 مجم)';
+
+  @override
+  String get frequencyHint => 'التكرار (مثال: مرتين يومياً)';
+
+  @override
+  String get medicationStatus => 'حالة الدواء';
+
+  @override
+  String get tapToUpdateStatus => 'اضغط لتحديث مدى فعالية هذا الدواء معك.';
+
+  @override
+  String get addMedicationFirst => 'أضف دواءً واحداً على الأقل.';
+
+  @override
+  String get recordSaved => 'تم حفظ السجل';
+
+  @override
+  String get recordDetails => 'تفاصيل السجل';
+
+  @override
+  String get noRecordsForPatient => 'لا توجد سجلات لهذا المريض بعد.';
+
+  @override
+  String get noRecordsFound => 'لم يتم العثور على سجلات';
+
+  @override
+  String get forPatient => 'لـ';
+
+  @override
+  String get recordsAccess => 'الوصول للسجلات';
+
+  @override
+  String get accessRequested => 'تم طلب الوصول';
+
+  @override
+  String get accessRequestSent => 'تم إرسال طلب الوصول';
+
+  @override
+  String get waitingPatientApproval => 'لديهم 15 دقيقة للموافقة. اضغط عرض مرة أخرى بعد الموافقة.';
+
+  @override
+  String get accessGranted => 'تم منح الوصول';
+
+  @override
+  String get requestRejected => 'تم رفض الطلب';
+
+  @override
+  String get accessExpired => 'انتهت صلاحية طلب الوصول';
+
+  @override
+  String get wantsToViewRecords => 'يريد الاطلاع على سجلاتك الطبية.';
+
+  @override
+  String get noPendingAccess => 'لا توجد طلبات معلّقة. عندما يطلب طبيب الاطلاع على سجلاتك الطبية، سيظهر الطلب هنا.';
+
+  @override
+  String get expiresInLabel => 'تنتهي خلال';
+
+  @override
+  String get minutesShort => 'دقيقة';
+
+  @override
+  String get ok => 'حسناً';
+
+  @override
+  String get dashboard => 'لوحة التحكم';
+
+  @override
+  String get navPatients => 'المرضى';
+
+  @override
+  String get navChat => 'المحادثات';
+
+  @override
+  String get navProfile => 'الملف الشخصي';
+
+  @override
+  String get todaysPatients => 'مرضى اليوم';
+
+  @override
+  String get upcomingAppointments => 'المواعيد القادمة';
+
+  @override
+  String get noUpcomingAppointments => 'لا توجد مواعيد قادمة';
+
+  @override
+  String get goodMorning => 'صباح الخير';
+
+  @override
+  String get goodAfternoon => 'مساء الخير';
+
+  @override
+  String get goodEvening => 'مساء الخير';
+
+  @override
+  String get drPrefix => 'د.';
+
+  @override
+  String get couldNotLoadData => 'تعذّر تحميل البيانات';
+
+  @override
+  String get patientInformation => 'بيانات المريض';
+
+  @override
+  String get appointmentsLabel => 'المواعيد';
+
+  @override
+  String get lastAppointment => 'آخر موعد';
+
+  @override
+  String get nextAppointment => 'الموعد القادم';
+
+  @override
+  String get chatAfterApproval => 'المحادثة متاحة بعد الموافقة على الموعد';
+
+  @override
+  String get conditionLabel => 'الحالة';
+
+  @override
+  String get ageLabel => 'العمر';
+
+  @override
+  String get noAppointmentsFound => 'لا توجد مواعيد';
+
+  @override
+  String get startChat => 'محادثة الآن';
+
+  @override
+  String get schedule => 'الجدول';
+
+  @override
+  String get pendingApprovals => 'طلبات بانتظار الموافقة';
+
+  @override
+  String get filterAll => 'الكل';
+
+  @override
+  String get filterActive => 'نشط';
+
+  @override
+  String get filterToday => 'اليوم';
+
+  @override
+  String get noAppointmentsYet => 'لا توجد مواعيد بعد.';
+
+  @override
+  String get myAppointments => 'مواعيدي';
+
+  @override
+  String get myPatients => 'مرضاي';
+
+  @override
+  String get patientsUnderCare => 'تحت الرعاية';
+
+  @override
+  String get searchPatients => 'ابحث بالاسم أو الحالة…';
+
+  @override
+  String get noPatientsYet => 'لا يوجد مرضى بعد. يظهر المرضى هنا بعد الموافقة على مواعيدهم.';
+
+  @override
+  String get availability => 'المواعيد المتاحة';
+
+  @override
+  String get workingDays => 'أيام العمل';
+
+  @override
+  String get workingHours => 'ساعات العمل';
+
+  @override
+  String get slotDuration => 'مدة الموعد';
+
+  @override
+  String get dailyBreak => 'استراحة يومية';
+
+  @override
+  String get saveAvailability => 'حفظ المواعيد';
+
+  @override
+  String get availabilitySaved => 'تم حفظ المواعيد';
+
+  @override
+  String get startLabel => 'البداية';
+
+  @override
+  String get endLabel => 'النهاية';
+
+  @override
+  String get breakStart => 'بداية الاستراحة';
+
+  @override
+  String get breakEnd => 'نهاية الاستراحة';
+
+  @override
+  String get bookAppointment => 'حجز موعد';
+
+  @override
+  String get selectAppointmentType => 'اختر نوع الموعد';
+
+  @override
+  String get chooseTime => 'اختر الوقت';
+
+  @override
+  String get requestAppointment => 'طلب الموعد';
+
+  @override
+  String get noSlotsAvailable => 'لا توجد مواعيد متاحة في هذا اليوم.';
+
+  @override
+  String get doctorNoAvailability => 'لم يقم الطبيب بتحديد مواعيده بعد. يُرجى المحاولة لاحقاً.';
+
+  @override
+  String get requestSentTo => 'تم إرسال الطلب إلى';
 }

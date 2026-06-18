@@ -25,13 +25,18 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import '../config/app_config.dart';
+import '../../models/chat_models.dart';
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Server base URL
 // ──────────────────────────────────────────────────────────────────────────────
+//
+// Resolved at runtime from AppConfig (FastAPI AI server, default port 8000).
+// Override per-run with --dart-define=FASTAPI_BASE_URL=... or APP_ENV/PC_IP.
+// See lib/core/config/app_config.dart.
 
-const String kServerBaseUrl = 'http://192.168.1.109:8000';
-//  const String kServerBaseUrl = 'http://192.168.1.103:8000';
-//  const String kServerBaseUrl = 'http://192.168.1.18:8000';
+String get kServerBaseUrl => AppConfig.fastApiBaseUrl;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // ChatResponse
@@ -42,26 +47,72 @@ class ChatResponse {
   final String? statusMessage;
   final bool isSuccess;
 
+  /// Session id echoed by FastAPI — adopt it so the backend keeps the same flow.
+  final String? sessionId;
+
+  /// Routing intent (e.g. symptom_follow_up, lab, brain, xray, prescription).
+  final String? intent;
+
+  /// Response language resolved by the backend ('ar' | 'en').
+  final String? lang;
+
+  /// Selectable options to show under the AI message, when present.
+  final FollowUp? followUp;
+
+  /// Generated report/image URL (lab, brain, xray, prescription), when present.
+  final String? imageUrl;
+
+  /// Optional direct download URL for the report image.
+  final String? downloadUrl;
+
   const ChatResponse._({
     required this.response,
     this.statusMessage,
     required this.isSuccess,
+    this.sessionId,
+    this.intent,
+    this.lang,
+    this.followUp,
+    this.imageUrl,
+    this.downloadUrl,
   });
 
   factory ChatResponse.success({
     required String response,
     String? statusMessage,
+    String? sessionId,
+    String? intent,
+    String? lang,
+    FollowUp? followUp,
+    String? imageUrl,
+    String? downloadUrl,
   }) =>
       ChatResponse._(
         response: response,
         statusMessage: statusMessage,
         isSuccess: true,
+        sessionId: sessionId,
+        intent: intent,
+        lang: lang,
+        followUp: followUp,
+        imageUrl: imageUrl,
+        downloadUrl: downloadUrl,
       );
 
   factory ChatResponse.failure(String errorDetail) => ChatResponse._(
         response: '⚠️ $errorDetail',
         isSuccess: false,
       );
+
+  /// True when the backend asked for selectable follow-up choices.
+  // Render a follow-up whenever the backend sends options. Some flows (brain /
+  // chest X-ray symptom cross-reference) mark the follow-up `required: false`
+  // but still expect the user to pick yes/no — so we key off options, not the
+  // `required` flag, and show the card for every option-based follow-up.
+  bool get hasFollowUp => followUp != null && followUp!.hasOptions;
+
+  /// True when the backend returned a generated report/image to display.
+  bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1088,12 +1139,18 @@ class ChatService {
       String body;
 
       if (file != null) {
+        // FastAPI /chat reads snake_case form fields (session_id, app_lang).
+        // camelCase duplicates are kept only for backward compatibility.
         final request = http.MultipartRequest('POST', uri)
-          ..fields['message']   = message
-          ..fields['sessionId'] = sessionId;
+          ..fields['message']    = message
+          ..fields['session_id'] = sessionId
+          ..fields['sessionId']  = sessionId;
 
         if (fileType != null) request.fields['fileType'] = fileType;
-        if (appLang  != null) request.fields['appLang']  = appLang;
+        if (appLang != null) {
+          request.fields['app_lang'] = appLang;
+          request.fields['appLang']  = appLang;
+        }
 
         request.files.add(await http.MultipartFile.fromPath(
           'file', file.path,
@@ -1108,8 +1165,11 @@ class ChatService {
           uri,
           headers: {'Content-Type': 'application/json; charset=utf-8'},
           body: json.encode({
-            'message':   message,
-            'sessionId': sessionId,
+            'message':    message,
+            'session_id': sessionId,
+            if (appLang != null) 'app_lang': appLang,
+            // Backward-compatible camelCase aliases.
+            'sessionId':  sessionId,
             if (appLang != null) 'appLang': appLang,
           }),
         );
@@ -1136,18 +1196,111 @@ class ChatService {
     }
   }
 
+  /// Continues an existing flow with the user's selected follow-up choices.
+  ///
+  /// Sends ONLY `session_id`, `app_lang`, and `follow_up_choices` (always an
+  /// array) — never the original message or file. The same [sessionId] returned
+  /// by FastAPI must be passed so the backend resumes the pending flow.
+  Future<ChatResponse> sendFollowUp({
+    required String sessionId,
+    required String appLang,
+    required List<String> choices,
+  }) async {
+    final uri = Uri.parse('$baseUrl/chat');
+    try {
+      final res = await _client.post(
+        uri,
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: json.encode({
+          'session_id': sessionId,
+          'app_lang': appLang,
+          'follow_up_choices': choices,
+          // Backward-compatible camelCase aliases.
+          'sessionId': sessionId,
+          'appLang': appLang,
+          'followUpChoices': choices,
+        }),
+      );
+      if (res.statusCode != 200) {
+        String detail = 'HTTP ${res.statusCode}';
+        try {
+          final d = json.decode(res.body) as Map<String, dynamic>;
+          detail = (d['detail'] ?? d['response'])?.toString() ?? detail;
+        } catch (_) {}
+        return ChatResponse.failure(detail);
+      }
+      return _parseChatBody(res.body);
+    } on SocketException catch (e) {
+      return ChatResponse.failure(
+        'Cannot reach chat server at $baseUrl. (${e.message})',
+      );
+    } catch (e) {
+      return ChatResponse.failure('Unexpected error: $e');
+    }
+  }
+
   static ChatResponse _parseChatBody(String body) {
     try {
       final decoded   = json.decode(body) as Map<String, dynamic>;
       final response  = decoded['response']?.toString()       ?? '';
       final statusMsg = decoded['status_message']?.toString();
+
+      // follow_up — present (and non-null) for any option-based flow.
+      FollowUp? followUp;
+      final rawFollow = decoded['follow_up'];
+      if (rawFollow is Map) {
+        followUp = FollowUp.fromJson(rawFollow.cast<String, dynamic>());
+      }
+
+      // Generated report image — normalized into a SINGLE field (imageUrl).
+      // Backend now sends a canonical top-level `report_image_url` for every
+      // flow (lab / brain MRI / chest X-ray / prescription); the remaining keys
+      // are kept for backward compatibility, in priority order. Both top-level
+      // and nested `data.*` are checked by _firstUrl.
+      final imageUrl = _firstUrl(decoded, const [
+        'report_image_url',   // ← canonical, preferred
+        'image_url',
+        'download_url',
+        'report_url',
+        'file_url',
+        // legacy per-model keys (nested in data)
+        'xray_report_image_url',
+        'brain_mri_report_image_url',
+        'brain_report_image_url',
+        'prescription_report_image_url',
+      ]);
+      final downloadUrl = decoded['download_url']?.toString();
+
       return ChatResponse.success(
         response:      response,
         statusMessage: (statusMsg?.isNotEmpty == true) ? statusMsg : null,
+        sessionId:     decoded['session_id']?.toString(),
+        intent:        decoded['intent']?.toString(),
+        lang:          decoded['lang']?.toString(),
+        followUp:      followUp,
+        imageUrl:      imageUrl,
+        downloadUrl:   (downloadUrl?.isNotEmpty == true) ? downloadUrl : null,
       );
     } catch (_) {
       return ChatResponse.failure('Could not parse server response.');
     }
+  }
+
+  /// Returns the first non-empty URL found among [keys] at the top level or in
+  /// a nested `data` object.
+  static String? _firstUrl(Map<String, dynamic> decoded, List<String> keys) {
+    for (final k in keys) {
+      final v = decoded[k];
+      if (v is String && v.isNotEmpty) return v;
+    }
+    final data = decoded['data'];
+    if (data is Map) {
+      for (final k in keys) {
+        final v = data[k];
+        if (v is String && v.isNotEmpty) return v;
+      }
+    }
+    return null;
   }
 }
 

@@ -1,6 +1,9 @@
 // lib/screens/home/record_detail_screen.dart
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/app_snack_bar.dart';
+import '../../../core/services/records_service.dart';
+import '../../../core/utils/record_labels.dart';
 import '../../../data/records_data.dart';
 
 class RecordDetailScreen extends StatelessWidget {
@@ -132,6 +135,13 @@ class RecordDetailScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Prescription status (patient can change it)
+                  if (record.isPrescription && record.serverId != null) ...[
+                    _PrescriptionStatusCard(
+                        isDark: isDark, card: card, txt: txt, record: record),
+                    const SizedBox(height: 16),
+                  ],
+
                   // Diagnosis
                   _SectionCard(
                     isDark: isDark, card: card, txt: txt,
@@ -293,6 +303,105 @@ class RecordDetailScreen extends StatelessWidget {
           const SizedBox(height: 8),
         ]),
       ),
+    );
+  }
+}
+
+// ── Prescription status card (patient-editable) ───────────────────────────────
+class _PrescriptionStatusCard extends StatefulWidget {
+  final bool isDark;
+  final Color card, txt;
+  final MedicalRecord record;
+  const _PrescriptionStatusCard({
+    required this.isDark,
+    required this.card,
+    required this.txt,
+    required this.record,
+  });
+
+  @override
+  State<_PrescriptionStatusCard> createState() =>
+      _PrescriptionStatusCardState();
+}
+
+class _PrescriptionStatusCardState extends State<_PrescriptionStatusCard> {
+  late String _status = widget.record.prescriptionStatus ?? 'taking_now';
+  bool _saving = false;
+
+  Future<void> _set(String s) async {
+    if (s == _status || _saving) return;
+    final prev = _status;
+    setState(() { _status = s; _saving = true; });
+    try {
+      await RecordsService.updateStatus(widget.record.serverId!, s);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _status = prev);
+      AppSnackBar.show(context, e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: widget.card,
+        borderRadius: BorderRadius.circular(16),
+        border: widget.isDark ? Border.all(color: context.divider) : null,
+        boxShadow: widget.isDark ? null : [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.medication_liquid_outlined, color: AppColors.success, size: 20),
+          const SizedBox(width: 8),
+          Text(context.l.medicationStatus,
+              style: TextStyle(color: widget.txt, fontSize: 15, fontWeight: FontWeight.w700)),
+          if (_saving) ...[
+            const Spacer(),
+            const SizedBox(width: 16, height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2)),
+          ],
+        ]),
+        const SizedBox(height: 6),
+        Text(context.l.tapToUpdateStatus,
+            style: const TextStyle(color: AppColors.grey, fontSize: 12)),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: rxStatusOptionsL10n(context.l).map((s) {
+            final sel = _status == s.$1;
+            return GestureDetector(
+              onTap: _saving ? null : () => _set(s.$1),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  color: sel ? AppColors.success : AppColors.success.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: sel ? AppColors.success : AppColors.success.withOpacity(0.3)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (sel) ...[
+                    const Icon(Icons.check_rounded, size: 15, color: Colors.white),
+                    const SizedBox(width: 4),
+                  ],
+                  Text(s.$2,
+                      style: TextStyle(
+                          color: sel ? Colors.white : widget.txt,
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            );
+          }).toList(),
+        ),
+      ]),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:medilink/l10n/app_localizations.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'core/config/app_config.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/screens/splash_screen.dart';
 import 'core/services/notification_service.dart';
@@ -23,6 +24,9 @@ void main() async {
   await SessionService.load();
   // Apply the saved theme + language before the first frame.
   await loadSavedPreferences();
+  // Log the resolved backend base URLs once (debug builds only). Reads the
+  // app language set by loadSavedPreferences, so it must come after it.
+  AppConfig.debugLog();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService.init();
   // FcmService.init() registers FCM handlers. Call after NotificationService so the

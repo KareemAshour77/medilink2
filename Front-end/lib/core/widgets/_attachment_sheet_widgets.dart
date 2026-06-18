@@ -11,24 +11,24 @@ part of '../../features/patient/screens/chatbot_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // _AttachmentSheet
-// Single bottom sheet with 3 direct action buttons.
-// No category step — the server router classifies the image.
+// Single bottom sheet with TWO direct upload actions:
+//   • Upload PDF
+//   • Upload / Take Image
+// The user never picks X-Ray / Brain / OCR / Lab — the unified
+// FastAPI /chat endpoint classifies the file by itself.
 // ══════════════════════════════════════════════════════════
 class _AttachmentSheet extends StatelessWidget {
   final VoidCallback onPdf;
-  final VoidCallback onXray;
-  final VoidCallback onBrain;
-  final VoidCallback onOcr;
+  final VoidCallback onImage;
 
   const _AttachmentSheet({
     required this.onPdf,
-    required this.onXray,
-    required this.onBrain,
-    required this.onOcr,
+    required this.onImage,
   });
 
   @override
   Widget build(BuildContext context) {
+    final ar = isArabic;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -37,13 +37,16 @@ class _AttachmentSheet extends StatelessWidget {
           children: [
             _SheetHandle(),
             const SizedBox(height: 16),
-            const Text(
-              'Test AI Models',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            Text(
+              ar ? 'إرفاق ملف' : 'Attach a file',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 4),
             Text(
-              'Choose a model to test with an image or send a PDF',
+              ar
+                  ? 'ارفع تقريرًا أو صورة ودع المساعد يحللها'
+                  : 'Upload a report or image and let the assistant analyze it',
+              textAlign: TextAlign.center,
               style: TextStyle(
                   fontSize: 12, color: context.text.withOpacity(0.45)),
             ),
@@ -52,7 +55,7 @@ class _AttachmentSheet extends StatelessWidget {
               Expanded(
                 child: _SourceButton(
                   icon: Icons.picture_as_pdf_rounded,
-                  label: 'Send PDF',
+                  label: ar ? 'رفع PDF' : 'Upload PDF',
                   color: Colors.red,
                   onTap: onPdf,
                 ),
@@ -60,30 +63,10 @@ class _AttachmentSheet extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: _SourceButton(
-                  icon: Icons.healing_rounded,
-                  label: 'Test X-Ray',
-                  color: Colors.blue,
-                  onTap: onXray,
-                ),
-              ),
-            ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(
-                child: _SourceButton(
-                  icon: Icons.psychology_rounded,
-                  label: 'Test Brain MRI',
-                  color: Colors.purple,
-                  onTap: onBrain,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _SourceButton(
-                  icon: Icons.text_snippet_rounded,
-                  label: 'Test OCR',
-                  color: Colors.orange,
-                  onTap: onOcr,
+                  icon: Icons.image_rounded,
+                  label: ar ? 'رفع / التقاط صورة' : 'Upload / Take Image',
+                  color: AppColors.primary,
+                  onTap: onImage,
                 ),
               ),
             ]),
@@ -110,48 +93,6 @@ class _SheetHandle extends StatelessWidget {
           ),
         ),
       );
-}
-
-/// A row tile inside the attachment category picker.
-class _AttachmentTile extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  const _AttachmentTile({
-    required this.icon,
-    required this.color,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      leading: Container(
-        padding: const EdgeInsets.all(9),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(icon, color: color, size: 22),
-      ),
-      title: Text(title,
-          style: const TextStyle(
-              fontWeight: FontWeight.w600, fontSize: 14)),
-      subtitle: Text(subtitle,
-          style: TextStyle(
-              fontSize: 12, color: context.text.withOpacity(0.5))),
-      trailing: Icon(Icons.chevron_right_rounded,
-          color: context.text.withOpacity(0.3)),
-      onTap: onTap,
-    );
-  }
 }
 
 /// Tappable icon+label block inside the source picker row.

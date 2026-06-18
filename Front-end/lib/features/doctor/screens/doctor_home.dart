@@ -98,16 +98,16 @@ class _DoctorHomeState extends State<DoctorHome> with WidgetsBindingObserver {
     MenuTab(),
   ];
 
-  static const _nav = [
-    _N(Icons.grid_view_outlined,       Icons.grid_view_rounded,       'Dashboard'),
-    _N(Icons.people_alt_outlined,      Icons.people_alt_rounded,      'Patients'),
-    _N(Icons.calendar_today_outlined,  Icons.calendar_today_rounded,  'Schedule'),
-    _N(Icons.chat_bubble_outline,      Icons.chat_bubble_rounded,     'Chat'),
-    _N(Icons.person_outline_rounded,   Icons.person_rounded,          'Profile'),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final l = context.l;
+    final nav = [
+      _N(Icons.grid_view_outlined,      Icons.grid_view_rounded,      l.dashboard),
+      _N(Icons.people_alt_outlined,     Icons.people_alt_rounded,     l.navPatients),
+      _N(Icons.calendar_today_outlined, Icons.calendar_today_rounded, l.schedule),
+      _N(Icons.chat_bubble_outline,     Icons.chat_bubble_rounded,    l.navChat),
+      _N(Icons.person_outline_rounded,  Icons.person_rounded,         l.navProfile),
+    ];
     return Scaffold(
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 260),
@@ -123,7 +123,7 @@ class _DoctorHomeState extends State<DoctorHome> with WidgetsBindingObserver {
         child: KeyedSubtree(key: ValueKey(_index), child: _tabs[_index]),
       ),
       bottomNavigationBar: _BottomBar(
-        items: _nav,
+        items: nav,
         selected: _index,
         onTap: (i) => setState(() => _index = i),
       ),

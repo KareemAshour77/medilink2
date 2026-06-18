@@ -1,13 +1,20 @@
 // ignore_for_file: prefer_const_constructors
 // ─────────────────────────────────────────────────────────
-// chat_screen.dart
+// chatbot_screen.dart  (MediBot — AI assistant)
 //
-//   ✅ Chest X-ray → ChestAnalysisService (/chest/analyze)
-//      DenseNet-121, 15-class, top-2 findings + RAG report.
-//   ✅ Brain MRI   → BrainAnalysisService (/brain/analyze)
-//      Custom CNN, 4-class, prediction + RAG report + Groq.
-//   ✅ Both flows: optional patient note → image → report →
-//      follow-up Q&A mode until the user ends the session.
+// Talks to the UNIFIED FastAPI /chat endpoint for everything:
+//   text chat, symptom checking, disease Q&A, medicine info,
+//   lab reports, prescriptions, chest X-ray, brain MRI.
+//
+// The frontend never sends an intent — the backend classifies
+// the message/file and may reply with:
+//   • plain text
+//   • a generated report image  (image_url)
+//   • a follow_up options card   (follow_up.required == true)
+//
+// Follow-up choices continue the SAME session with only
+// { session_id, app_lang, follow_up_choices } — the original
+// message/file is never re-sent.
 // ─────────────────────────────────────────────────────────
 
 import 'dart:io';
@@ -18,12 +25,10 @@ import 'package:file_picker/file_picker.dart';
 
 import '../../../core/services/api_ai.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../../core/widgets/app_snack_bar.dart';
 
 import '../../../models/chat_models.dart';
 import '../../../core/widgets/messages_list.dart';
 import '../../../core/widgets/message_input_bar.dart';
-import '../../../core/widgets/attachment_preview.dart';
 
 // ── Small reusable sub-widgets for picker sheets ──────────
 part '../../../core/widgets/_attachment_sheet_widgets.dart';
@@ -37,28 +42,40 @@ class ChatbotScreen extends StatefulWidget {
 
 class _ChatbotScreenState extends State<ChatbotScreen> {
   // ── Controllers ──────────────────────────────────────────
-  final _textCtrl   = TextEditingController();
-  final _scroll     = ScrollController();
-  final _picker     = ImagePicker();
+  final _textCtrl = TextEditingController();
+  final _scroll   = ScrollController();
+  final _picker   = ImagePicker();
 
   // ── State ────────────────────────────────────────────────
-  final _messages     = <ChatMessage>[];
-  final _pendingFiles = <PendingFile>[];
+  final _messages = <ChatMessage>[];
 
   bool _initialized    = false;
   bool _typing         = false;
   bool _userScrolledUp = false;
 
-  /// Set after a chest X-ray analysis — routes text to ChestAnalysisService.followUp().
-  ChestAnalysisResult? _lastChestResult;
+  /// True while a required follow-up card is visible and waiting for an answer
+  /// — the composer is disabled until the user picks an option.
+  bool _followUpPending = false;
 
-  /// Set after a brain MRI analysis — routes text to BrainAnalysisService.followUp().
-  BrainAnalysisResult? _lastBrainResult;
+  // ── Deferred reveal ──────────────────────────────────────
+  // Report image + follow-up card are revealed only AFTER the AI text finishes
+  // typing. They are stashed here, keyed to the bot text message id, until that
+  // message reports completion via [_onBotTextComplete].
+  FollowUp? _deferredFollowUp;
+  String?   _deferredReportUrl;
+  String?   _deferredReportDownload;
+  String?   _revealAnchorId;
+
+  /// Report URLs already shown — avoids duplicate cards when a later response
+  /// repeats the same report_image_url.
+  final _shownReportUrls = <String>{};
 
   // ── Services ─────────────────────────────────────────────
   final _chatService = ChatService(kServerBaseUrl);
-  final String _sessionId =
-      DateTime.now().millisecondsSinceEpoch.toString();
+
+  /// Stable session id. Adopted from FastAPI's response so the backend keeps
+  /// the same flow/session across follow-ups.
+  String _sessionId = DateTime.now().millisecondsSinceEpoch.toString();
 
   // ════════════════════════════════════════════════════════
   // Lifecycle
@@ -69,8 +86,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     super.initState();
     _scroll.addListener(() {
       if (!_scroll.hasClients) return;
-      final distFromBottom =
-          _scroll.position.maxScrollExtent - _scroll.offset;
+      final distFromBottom = _scroll.position.maxScrollExtent - _scroll.offset;
       _userScrolledUp = distFromBottom > 80;
     });
   }
@@ -83,9 +99,17 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   }
 
   // ════════════════════════════════════════════════════════
-  // Scroll helpers
+  // Helpers
   // ════════════════════════════════════════════════════════
 
+  /// Current backend language — 'ar' for Arabic, 'en' for anything else.
+  String get _appLang =>
+      langNotifier.value.languageCode == 'ar' ? 'ar' : 'en';
+
+  bool get _isAr => _appLang == 'ar';
+
+  /// Single, coalesced scroll-to-bottom. Skips if the user scrolled up
+  /// (unless [force]) to avoid fighting the user / multiple auto-scrolls.
   void _scrollDown({bool force = false}) {
     if (!force && _userScrolledUp) return;
     Future.delayed(const Duration(milliseconds: 100), () {
@@ -99,159 +123,12 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     });
   }
 
-  // ════════════════════════════════════════════════════════
-  // Core send handler — text and generic file messages
-  // ════════════════════════════════════════════════════════
+  bool _isImageExt(String ext) =>
+      ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].contains(ext);
 
-  Future<void> _handleSend({
-    File? file,
-    String? fileName,
-    bool isPrescription = false,
-  }) async {
-    final text = _textCtrl.text.trim();
-    if (text.isEmpty && file == null) return;
-
-    setState(() {
-      if (text.isNotEmpty) _messages.add(ChatMessage.text(text, false));
-      if (file != null) {
-        final ext   = fileName?.split('.').last.toLowerCase() ?? '';
-        final isImg = _isImageExt(ext);
-        _messages.add(
-          isImg
-              ? ChatMessage.image(file, false)
-              : ChatMessage.file(file, fileName ?? 'file', false),
-        );
-      }
-      _textCtrl.clear();
-      _typing         = true;
-      _userScrolledUp = false;
-    });
-    _scrollDown(force: true);
-
-    try {
-      if (file != null) {
-        await _handleFileMessage(
-            file: file, fileName: fileName, isPrescription: isPrescription);
-      } else if (_lastBrainResult != null) {
-        await _handleBrainFollowUp(text);
-      } else if (_lastChestResult != null) {
-        await _handleChestFollowUp(text);
-      } else {
-        final res = await _chatService.sendMessage(
-          message:   text,
-          sessionId: _sessionId,
-          appLang:   langNotifier.value.languageCode,
-        );
-        setState(() {
-          _markLastUserMsgSent();
-          _messages.add(ChatMessage.text(res.response, true));
-          _typing = false;
-        });
-      }
-    } catch (e) {
-      _handleSendError(e);
-    }
-
-    _scrollDown();
-  }
-
-  Future<void> _handleFileMessage({
-    required File file,
-    required String? fileName,
-    required bool isPrescription,
-  }) async {
-    final ext     = fileName?.split('.').last.toLowerCase() ?? '';
-    final isImg   = _isImageExt(ext);
-    final appLang = langNotifier.value.languageCode;
-
-    if (isImg) {
-      final fileType     = isPrescription ? 'prescription' : 'auto';
-      final thinkingLabel = isPrescription
-          ? '💊 Reading prescription...'
-          : '🔬 Analyzing image...';
-
-      await _sendWithThinkingCardFull(
-        label: thinkingLabel,
-        call: () => _chatService.sendMessage(
-          message:   isPrescription ? 'prescription' : '',
-          sessionId: _sessionId,
-          file:      file,
-          fileType:  fileType,
-          appLang:   appLang,
-        ),
-      );
-    } else {
-      await _sendWithThinkingCard(
-        label: '📄 Processing your document...',
-        call: () async {
-          final res = await _chatService.sendMessage(
-            message:   'User uploaded a file: $fileName',
-            sessionId: _sessionId,
-            file:      file,
-            fileType:  'auto',
-            appLang:   appLang,
-          );
-          return res.response;
-        },
-      );
-    }
-  }
-
-  Future<void> _sendWithThinkingCard({
-    required String label,
-    required Future<String> Function() call,
-  }) async {
-    setState(() => _messages.add(ChatMessage.thinking(label)));
-    _scrollDown();
-    try {
-      final reply = await call();
-      setState(() {
-        _removeThinkingCard();
-        _markLastUserMsgSent();
-        _messages.add(ChatMessage.text(reply, true));
-        _typing = false;
-      });
-    } catch (e) {
-      setState(() => _removeThinkingCard());
-      rethrow;
-    }
-  }
-
-  Future<void> _sendWithThinkingCardFull({
-    required String label,
-    required Future<ChatResponse> Function() call,
-  }) async {
-    setState(() => _messages.add(ChatMessage.thinking(label)));
-    _scrollDown();
-    try {
-      final res = await call();
-      setState(() {
-        _removeThinkingCard();
-        _markLastUserMsgSent();
-        if (res.statusMessage != null && res.statusMessage!.isNotEmpty) {
-          _messages.add(ChatMessage.text(res.statusMessage!, true));
-        }
-        _messages.add(ChatMessage.text(res.response, true));
-        _typing = false;
-      });
-      _scrollDown();
-    } catch (e) {
-      setState(() => _removeThinkingCard());
-      rethrow;
-    }
-  }
-
-  void _handleSendError(Object e) {
-    setState(() {
-      final idx = _messages
-          .lastIndexWhere((m) => !m.isBot && m.type == MsgType.text);
-      if (idx != -1) {
-        _messages[idx] = _messages[idx].withStatus(MsgStatus.failed);
-      }
-      _removeThinkingCard();
-      _messages.add(ChatMessage.text('⚠️ $e', true));
-      _typing = false;
-    });
+  String _processingLabel(bool isImage) {
+    if (isImage) return _isAr ? '🔬 جاري تحليل الصورة…' : '🔬 Analyzing image…';
+    return _isAr ? '📄 جاري معالجة الملف…' : '📄 Processing your file…';
   }
 
   void _removeThinkingCard() {
@@ -261,335 +138,129 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   }
 
   void _markLastUserMsgSent() {
-    final idx = _messages
-        .lastIndexWhere((m) => !m.isBot && m.type == MsgType.text);
+    final idx =
+        _messages.lastIndexWhere((m) => !m.isBot && m.type == MsgType.text);
     if (idx != -1) {
       _messages[idx] = _messages[idx].withStatus(MsgStatus.sent);
     }
   }
 
-  bool _isImageExt(String ext) =>
-      ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(ext);
-
-  bool _isImageFile(String name) =>
-      _isImageExt(name.split('.').last.toLowerCase());
-
-  // ════════════════════════════════════════════════════════
-  // Chest follow-up Q&A
-  // ════════════════════════════════════════════════════════
-
-  static const _noReplies = {
-    'no', 'nope', 'nah', 'no thanks', 'no thank you', 'not now',
-    'none', 'nothing', 'stop', 'end', 'exit', 'cancel', 'done', 'ok', 'okay',
-    'لا', 'لأ', 'لا شكرا', 'لا شكراً', 'لا، شكرا', 'انهاء', 'إنهاء', 'كفاية',
-  };
-
-  bool _isNoReply(String text) =>
-      _noReplies.contains(text.toLowerCase().trim());
-
-  Future<void> _handleChestFollowUp(String question) async {
-    final isAr = langNotifier.value.languageCode == 'ar';
-
-    if (_isNoReply(question)) {
-      setState(() {
-        _lastChestResult = null;
-        _markLastUserMsgSent();
-        _messages.add(ChatMessage.text(
-          isAr
-              ? 'حسناً! إذا احتجت أي مساعدة أخرى، أنا هنا.'
-              : 'Got it! Let me know if you need anything else.',
-          true,
-        ));
-        _typing = false;
-      });
+  /// Adds the AI text immediately, then DEFERS the report image and follow-up
+  /// card until that text finishes typing (revealed in [_onBotTextComplete]).
+  /// Must be called inside setState.
+  void _renderResponse(ChatResponse res) {
+    if (!res.isSuccess) {
+      _messages.add(ChatMessage.text(res.response, true));
       return;
     }
+    // Adopt the backend session id so follow-ups resume the same flow.
+    if (res.sessionId != null && res.sessionId!.isNotEmpty) {
+      _sessionId = res.sessionId!;
+    }
 
-    final diseaseKey = (_lastChestResult!.findings.isNotEmpty)
-        ? _lastChestResult!.findings.first.classKey
-        : null;
-    final lang = isAr ? 'ar' : 'en';
+    // Text bubbles type out first; the last one is the "anchor" we wait on.
+    String? anchorId;
+    if (res.statusMessage != null && res.statusMessage!.isNotEmpty) {
+      final m = ChatMessage.text(res.statusMessage!, true);
+      _messages.add(m);
+      anchorId = m.id;
+    }
+    if (res.response.trim().isNotEmpty) {
+      final m = ChatMessage.text(res.response, true);
+      _messages.add(m);
+      anchorId = m.id;
+    }
 
-    await _sendWithThinkingCard(
-      label: '🫁 Looking up your question…',
-      call: () async {
-        final result = await ChestAnalysisService.followUp(
-          question:   question,
-          diseaseKey: diseaseKey,
-          language:   lang,
-        );
-        return result.answer;
-      },
-    );
+    // Report image — skip duplicates of an already-shown URL.
+    String? reportUrl = res.hasImage ? res.imageUrl : null;
+    if (reportUrl != null && !_shownReportUrls.add(reportUrl)) reportUrl = null;
+    final followUp = res.hasFollowUp ? res.followUp : null;
 
-    // Prompt the user to continue or end follow-up mode.
-    if (mounted && _lastChestResult != null) {
-      setState(() => _messages.add(ChatMessage.text(
-        isAr
-            ? '❓ هل لديك سؤال آخر حول نتائج الأشعة؟'
-            : '❓ Do you have another question about your X-ray findings?',
-        true,
-      )));
-      _scrollDown();
+    if (reportUrl == null && followUp == null) return;
+
+    if (anchorId == null) {
+      // No text to type → reveal immediately.
+      _revealExtras(reportUrl, res.downloadUrl, followUp);
+    } else {
+      // Defer until the anchor text finishes typing.
+      _deferredReportUrl      = reportUrl;
+      _deferredReportDownload = res.downloadUrl;
+      _deferredFollowUp       = followUp;
+      _revealAnchorId         = anchorId;
     }
   }
 
-  // ════════════════════════════════════════════════════════
-  // Brain MRI follow-up Q&A
-  // ════════════════════════════════════════════════════════
-
-  Future<void> _handleBrainFollowUp(String question) async {
-    final isAr = langNotifier.value.languageCode == 'ar';
-
-    if (_isNoReply(question)) {
-      setState(() {
-        _lastBrainResult = null;
-        _markLastUserMsgSent();
-        _messages.add(ChatMessage.text(
-          isAr
-              ? 'حسناً! إذا احتجت أي مساعدة أخرى، أنا هنا.'
-              : 'Got it! Let me know if you need anything else.',
-          true,
-        ));
-        _typing = false;
-      });
-      return;
+  /// Appends the deferred report image + follow-up card. Must run inside setState.
+  void _revealExtras(String? reportUrl, String? downloadUrl, FollowUp? followUp) {
+    if (reportUrl != null) {
+      _messages.add(ChatMessage.report(
+        imageUrl: reportUrl,
+        downloadUrl: downloadUrl,
+      ));
     }
-
-    final predictedClass = _lastBrainResult!.predictedClass.isNotEmpty
-        ? _lastBrainResult!.predictedClass
-        : null;
-    final lang = isAr ? 'ar' : 'en';
-
-    await _sendWithThinkingCard(
-      label: '🧠 Looking up your question…',
-      call: () async {
-        final result = await BrainAnalysisService.followUp(
-          question:       question,
-          predictedClass: predictedClass,
-          language:       lang,
-        );
-        return result.answer;
-      },
-    );
-
-    if (mounted && _lastBrainResult != null) {
-      setState(() => _messages.add(ChatMessage.text(
-        isAr
-            ? '❓ هل لديك سؤال آخر حول نتائج الرنين المغناطيسي؟'
-            : '❓ Do you have another question about your MRI findings?',
-        true,
-      )));
-      _scrollDown();
+    if (followUp != null) {
+      _messages.add(ChatMessage.followUp(followUp));
+      _followUpPending = true; // lock the composer until answered
     }
   }
 
-  // ════════════════════════════════════════════════════════
-  // Chest X-ray flow
-  //
-  // 1. Ask the patient for an optional note (symptoms / context).
-  // 2. Open gallery — pick exactly ONE photo.
-  // 3. Show the image bubble + thinking card.
-  // 4. Call ChestAnalysisService.analyze() with the note.
-  // 5. Render the structured report as a chat message.
-  // ════════════════════════════════════════════════════════
+  /// Called when a bot text bubble finishes typing. If it's the anchor for a
+  /// deferred reveal, show the report image + follow-up card now.
+  void _onBotTextComplete(String id) {
+    if (id != _revealAnchorId) return;
+    final reportUrl = _deferredReportUrl;
+    final download  = _deferredReportDownload;
+    final followUp  = _deferredFollowUp;
+    _revealAnchorId = null;
+    _deferredReportUrl = null;
+    _deferredReportDownload = null;
+    _deferredFollowUp = null;
+    if (reportUrl == null && followUp == null) return;
+    setState(() => _revealExtras(reportUrl, download, followUp));
+    _scrollDown();
+  }
 
-  Future<void> _runChestXrayFlow() async {
-    // ── Step 1: pick one photo ────────────────────────────
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-    HapticFeedback.lightImpact();
-
-    // ── Step 2: collect optional patient note ─────────────
-    final note = await _showPatientNoteDialog();
-    // note == null  → user cancelled the dialog entirely
-    // note == ''    → user tapped "Skip" or cleared the field
-    if (note == null) return;
-
-    final file = File(picked.path);
-
-    // ── Step 3: add bubbles ───────────────────────────────
+  void _handleSendError(Object e) {
+    if (!mounted) return;
     setState(() {
-      if (note.isNotEmpty) {
-        _messages.add(ChatMessage.text(note, false));
+      final idx =
+          _messages.lastIndexWhere((m) => !m.isBot && m.type == MsgType.text);
+      if (idx != -1) {
+        _messages[idx] = _messages[idx].withStatus(MsgStatus.failed);
       }
-      _messages.add(ChatMessage.image(file, false));
-      _messages.add(ChatMessage.thinking('🫁 Analyzing chest X-ray…'));
-      _typing         = true;
-      _userScrolledUp = false;
+      _removeThinkingCard();
+      _messages.add(ChatMessage.text('⚠️ $e', true));
+      _typing = false;
     });
-    _scrollDown(force: true);
-
-    // ── Step 4: call /chest/analyze ──────────────────────
-    try {
-      final result = await ChestAnalysisService.analyze(
-        imageFile:   file,
-        patientNote: note,
-        language:    langNotifier.value.languageCode == 'ar' ? 'ar' : 'en',
-      );
-
-      // ── Step 5: render report ─────────────────────────
-      final reportText = result.toChatMessage();
-      final isAr = langNotifier.value.languageCode == 'ar';
-
-      setState(() {
-        _removeThinkingCard();
-        _markLastUserMsgSent();
-        _messages.add(ChatMessage.text(reportText, true));
-        _messages.add(ChatMessage.text(
-          isAr
-              ? '💬 يمكنك الآن طرح أسئلة متابعة حول نتائج الأشعة.'
-              : '💬 You can now ask follow-up questions about these findings.',
-          true,
-        ));
-        _lastChestResult = result;
-        _typing = false;
-      });
-    } catch (e) {
-      _handleSendError(e);
-    }
-
-    _scrollDown();
-  }
-
-  /// Shows a bottom-sheet dialog where the patient can type symptoms or context
-  /// before sending the X-ray.  Returns the trimmed text, empty string if
-  /// skipped, or null if cancelled.
-  Future<String?> _showPatientNoteDialog() {
-    final ctrl = TextEditingController();
-    return showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: context.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20, right: 20, top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle
-              Center(
-                child: Container(
-                  width: 40, height: 5,
-                  decoration: BoxDecoration(
-                    color: AppColors.grey.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '🫁 Chest X-ray Analysis',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Add any symptoms or notes (optional)',
-                style: TextStyle(fontSize: 12, color: ctx.text.withOpacity(0.5)),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: ctrl,
-                maxLines: 3,
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                decoration: InputDecoration(
-                  hintText: 'e.g. cough, shortness of breath, chest pain…',
-                  hintStyle: TextStyle(color: ctx.text.withOpacity(0.35)),
-                  filled: true,
-                  fillColor: ctx.bg,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text(
-                    'Send',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   // ════════════════════════════════════════════════════════
-  // Brain MRI flow — full analysis (mirrors chest X-ray flow)
-  //
-  // 1. Pick one MRI photo from gallery.
-  // 2. Optional patient note (symptoms / context).
-  // 3. Call BrainAnalysisService.analyze().
-  // 4. Render structured report as chat message.
-  // 5. Enter follow-up Q&A mode.
+  // Send: text
   // ════════════════════════════════════════════════════════
 
-  Future<void> _runBrainMriFlow() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-    HapticFeedback.lightImpact();
-
-    final note = await _showBrainNoteDialog();
-    if (note == null) return; // user cancelled
-
-    final file = File(picked.path);
+  Future<void> _sendText() async {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) return;
 
     setState(() {
-      if (note.isNotEmpty) _messages.add(ChatMessage.text(note, false));
-      _messages.add(ChatMessage.image(file, false));
-      _messages.add(ChatMessage.thinking('🧠 Analyzing brain MRI…'));
-      _typing         = true;
+      _messages.add(ChatMessage.text(text, false));
+      _textCtrl.clear();
+      _typing         = true; // normal typing animation for text replies
       _userScrolledUp = false;
-      _lastChestResult = null; // clear other follow-up mode
     });
     _scrollDown(force: true);
 
     try {
-      final result = await BrainAnalysisService.analyze(
-        imageFile:   file,
-        patientNote: note,
-        language:    langNotifier.value.languageCode == 'ar' ? 'ar' : 'en',
+      final res = await _chatService.sendMessage(
+        message:   text,
+        sessionId: _sessionId,
+        appLang:   _appLang,
       );
-
-      final reportText = result.toChatMessage();
-      final isAr = langNotifier.value.languageCode == 'ar';
-
+      if (!mounted) return;
       setState(() {
-        _removeThinkingCard();
         _markLastUserMsgSent();
-        _messages.add(ChatMessage.text(reportText, true));
-        _messages.add(ChatMessage.text(
-          isAr
-              ? '💬 يمكنك الآن طرح أسئلة متابعة حول نتائج الرنين المغناطيسي.'
-              : '💬 You can now ask follow-up questions about these MRI findings.',
-          true,
-        ));
-        _lastBrainResult = result;
         _typing = false;
+        _renderResponse(res);
       });
     } catch (e) {
       _handleSendError(e);
@@ -597,192 +268,157 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     _scrollDown();
   }
 
-  Future<String?> _showBrainNoteDialog() {
-    final ctrl = TextEditingController();
-    return showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: context.card,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20, right: 20, top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40, height: 5,
-                  decoration: BoxDecoration(
-                    color: AppColors.grey.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '🧠 Brain MRI Analysis',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Add any symptoms or notes (optional)',
-                style: TextStyle(fontSize: 12, color: ctx.text.withOpacity(0.5)),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: ctrl,
-                maxLines: 3,
-                autofocus: true,
-                textInputAction: TextInputAction.done,
-                decoration: InputDecoration(
-                  hintText: 'e.g. headache, blurred vision, morning nausea…',
-                  hintStyle: TextStyle(color: ctx.text.withOpacity(0.35)),
-                  filled: true,
-                  fillColor: ctx.bg,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text(
-                    'Send',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  Future<void> _retryMessage(ChatMessage msg) async {
+    if (msg.text == null || msg.text!.isEmpty) return;
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx != -1) _messages[idx] = _messages[idx].withStatus(MsgStatus.sending);
+      _typing = true;
+    });
+    try {
+      final res = await _chatService.sendMessage(
+        message:   msg.text!,
+        sessionId: _sessionId,
+        appLang:   _appLang,
+      );
+      if (!mounted) return;
+      setState(() {
+        final idx = _messages.indexWhere((m) => m.id == msg.id);
+        if (idx != -1) _messages[idx] = _messages[idx].withStatus(MsgStatus.sent);
+        _typing = false;
+        _renderResponse(res);
+      });
+    } catch (e) {
+      _handleSendError(e);
+    }
+    _scrollDown();
   }
 
   // ════════════════════════════════════════════════════════
-  // Attachment queue (generic / PDF flow)
+  // Send: file (PDF / image) — unified, with a processing card
+  // (NOT the normal typing animation).
   // ════════════════════════════════════════════════════════
 
-  Future<void> _pickMedia({
-    required ImageSource source,
-    required AttachmentType type,
+  Future<void> _sendFile({
+    required File file,
+    required String fileName,
+    required bool isImage,
   }) async {
-    final picked = await _picker.pickImage(source: source);
-    if (picked == null) return;
-    HapticFeedback.lightImpact();
-    _addToPendingQueue(
-      file:       File(picked.path),
-      fileName:   picked.name,
-      type:       type,
-      fromCamera: source == ImageSource.camera,
-    );
+    setState(() {
+      _messages.add(
+        isImage
+            ? ChatMessage.image(file, false)
+            : ChatMessage.file(file, fileName, false),
+      );
+      _messages.add(ChatMessage.thinking(_processingLabel(isImage)));
+      _typing         = false; // file analysis uses the processing card only
+      _userScrolledUp = false;
+    });
+    _scrollDown(force: true);
+
+    try {
+      final res = await _chatService.sendMessage(
+        message:   '',
+        sessionId: _sessionId,
+        file:      file,
+        fileType:  'auto',
+        appLang:   _appLang,
+      );
+      if (!mounted) return;
+      setState(() {
+        _removeThinkingCard();
+        _renderResponse(res);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _removeThinkingCard();
+        _messages.add(ChatMessage.text('⚠️ $e', true));
+      });
+    }
+    _scrollDown();
   }
 
-  Future<void> _pickFileForQueue(AttachmentType type) async {
+  // ════════════════════════════════════════════════════════
+  // Follow-up choices — continue the SAME session.
+  // Sends only { session_id, app_lang, follow_up_choices }.
+  // ════════════════════════════════════════════════════════
+
+  Future<void> _submitFollowUp(ChatMessage msg, List<String> ids) async {
+    if (ids.isEmpty || msg.followUp == null) return;
+
+    // Human-readable summary of the choices (UI only — NOT sent to the API).
+    final labels = <String>[
+      for (final id in ids)
+        msg.followUp!.options
+            .firstWhere((o) => o.id == id,
+                orElse: () => FollowUpOption(id: id))
+            .display,
+    ];
+    final separator = _isAr ? '، ' : ', ';
+
+    setState(() {
+      // Lock the answered card so it can't be submitted twice + re-enable input.
+      final idx = _messages.indexWhere((m) => m.id == msg.id);
+      if (idx != -1) _messages[idx] = _messages[idx].markAnswered();
+      _followUpPending = false;
+      // Small user bubble summarising the selection.
+      _messages.add(ChatMessage.text(labels.join(separator), false));
+      _typing         = true;
+      _userScrolledUp = false;
+    });
+    _scrollDown(force: true);
+
+    try {
+      final res = await _chatService.sendFollowUp(
+        sessionId: _sessionId,
+        appLang:   _appLang,
+        choices:   ids,
+      );
+      if (!mounted) return;
+      setState(() {
+        _markLastUserMsgSent();
+        _typing = false;
+        _renderResponse(res);
+      });
+    } catch (e) {
+      _handleSendError(e);
+    }
+    _scrollDown();
+  }
+
+  // ════════════════════════════════════════════════════════
+  // Pickers
+  // ════════════════════════════════════════════════════════
+
+  Future<void> _pickPdf() async {
     final result = await FilePicker.pickFiles(
       type:              FileType.custom,
       allowedExtensions: ['pdf', 'doc', 'docx'],
-      allowMultiple:     true,
+      allowMultiple:     false,
     );
     if (result == null || result.files.isEmpty) return;
+    final f = result.files.first;
+    if (f.path == null) return;
     HapticFeedback.lightImpact();
-    for (final f in result.files) {
-      if (f.path == null) continue;
-      _addToPendingQueue(
-        file:       File(f.path!),
-        fileName:   f.name,
-        type:       type,
-        fromCamera: false,
-      );
-    }
+    await _sendFile(file: File(f.path!), fileName: f.name, isImage: false);
   }
 
-  void _addToPendingQueue({
-    required File file,
-    required String fileName,
-    required AttachmentType type,
-    required bool fromCamera,
-  }) {
-    setState(() {
-      _pendingFiles.add(PendingFile(
-        file:       file,
-        fileName:   fileName,
-        type:       type,
-        fromCamera: fromCamera,
-      ));
-    });
-    _showPreviewSheet();
-  }
-
-  Future<void> _sendPendingFiles() async {
-    final files = List<PendingFile>.from(_pendingFiles);
-    setState(() => _pendingFiles.clear());
-    for (final pf in files) {
-      await _handleSend(
-        file:           pf.file,
-        fileName:       pf.fileName,
-        isPrescription: pf.type == AttachmentType.prescription,
-      );
-    }
+  Future<void> _pickImage(ImageSource source) async {
+    final picked = await _picker.pickImage(source: source, imageQuality: 90);
+    if (picked == null) return;
+    HapticFeedback.lightImpact();
+    await _sendFile(
+      file:     File(picked.path),
+      fileName: picked.name,
+      isImage:  true,
+    );
   }
 
   // ════════════════════════════════════════════════════════
   // Bottom sheets
   // ════════════════════════════════════════════════════════
 
-  void _showPreviewSheet() {
-    showModalBottomSheet(
-      context:             context,
-      backgroundColor:     context.card,
-      isScrollControlled:  true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => AttachmentPreview(
-        files:    _pendingFiles,
-        onRemove: (i) => setState(() => _pendingFiles.removeAt(i)),
-        onRetake: (i) async {
-          setState(() => _pendingFiles.removeAt(i));
-          await _pickMedia(
-              source: ImageSource.camera, type: AttachmentType.xray);
-        },
-        onAddMore: () {
-          Navigator.pop(context);
-          _showAttachmentSheet();
-        },
-        onSend: () {
-          Navigator.pop(context);
-          _sendPendingFiles();
-        },
-      ),
-    );
-  }
-
-  /// Attachment sheet — three actions:
-  ///   PDF      → generic file queue
-  ///   X-Ray    → full chest analysis flow (NEW)
-  ///   Brain    → brain quick-test
-  ///   OCR      → OCR model test
   void _showAttachmentSheet() {
     showModalBottomSheet(
       context:         context,
@@ -793,30 +429,68 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       builder: (_) => _AttachmentSheet(
         onPdf: () {
           Navigator.pop(context);
-          _pickFileForQueue(AttachmentType.labResult);
+          _pickPdf();
         },
-        // ── Chest X-ray → new full analysis flow ──────────
-        onXray: () {
+        onImage: () {
           Navigator.pop(context);
-          _runChestXrayFlow();          // ← replaces old _testModel('chest', …)
-        },
-        // ── Brain MRI → full analysis flow ────────────────
-        onBrain: () {
-          Navigator.pop(context);
-          _runBrainMriFlow();
-        },
-        onOcr: () {
-          Navigator.pop(context);
-          // OCR test — reuse PredictionService with its own endpoint when ready
-          _showComingSoon('OCR');
+          _showImageSourceSheet();
         },
       ),
     );
   }
 
-  void _showComingSoon(String feature) {
-    AppSnackBar.show(context, '$feature model coming soon',
-        backgroundColor: Colors.black87, duration: const Duration(seconds: 2));
+  void _showImageSourceSheet() {
+    showModalBottomSheet(
+      context:         context,
+      backgroundColor: context.card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 12, 8, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _SheetHandle(),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(9),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.photo_camera_rounded,
+                      color: AppColors.primary),
+                ),
+                title: Text(_isAr ? 'التقاط صورة' : 'Take a photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(9),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.photo_library_rounded,
+                      color: AppColors.primary),
+                ),
+                title: Text(_isAr ? 'اختيار من المعرض' : 'Choose from gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // ════════════════════════════════════════════════════════
@@ -837,79 +511,23 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
       body: Column(children: [
         Expanded(
           child: MessagesList(
-            messages:         _messages,
-            isTyping:         _typing,
-            scrollController: _scroll,
-            onRetry: (msg) => _handleSend(
-              file:     msg.fileData,
-              fileName: msg.fileName,
-            ),
+            messages:          _messages,
+            isTyping:          _typing,
+            scrollController:  _scroll,
+            isArabic:          _isAr,
+            onRetry:           _retryMessage,
+            onFollowUpSubmit:  _submitFollowUp,
+            onBotTextComplete: _onBotTextComplete,
           ),
         ),
-        if (_lastChestResult != null || _lastBrainResult != null) _buildFollowUpBanner(),
         MessageInputBar(
           controller:      _textCtrl,
-          hintText:        l.typingHint,
-          onSend:          _handleSend,
+          hintText:        _followUpPending
+              ? (_isAr ? 'اختر من الأعلى للمتابعة…' : 'Choose above to continue…')
+              : l.typingHint,
+          enabled:         !_followUpPending,
+          onSend:          _sendText,
           onAttachmentTap: _showAttachmentSheet,
-        ),
-      ]),
-    );
-  }
-
-  Widget _buildFollowUpBanner() {
-    final isAr = langNotifier.value.languageCode == 'ar';
-
-    final String label;
-    final VoidCallback onDismiss;
-
-    if (_lastBrainResult != null) {
-      final condition = _lastBrainResult!.scanResult.predictedCondition.isNotEmpty
-          ? _lastBrainResult!.scanResult.predictedCondition
-          : 'Brain MRI';
-      label     = isAr ? 'وضع المتابعة: $condition' : 'Follow-up: $condition';
-      onDismiss = () => setState(() => _lastBrainResult = null);
-    } else {
-      final finding = _lastChestResult!.findings.isNotEmpty
-          ? _lastChestResult!.findings.first.displayName
-          : 'X-ray';
-      label     = isAr ? 'وضع المتابعة: $finding' : 'Follow-up: $finding';
-      onDismiss = () => setState(() => _lastChestResult = null);
-    }
-
-    final dismiss = isAr ? 'إنهاء' : 'End';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: AppColors.primary.withOpacity(0.08),
-      child: Row(children: [
-        const Icon(Icons.chat_bubble_outline_rounded,
-            size: 14, color: AppColors.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.primary,
-                fontWeight: FontWeight.w500),
-          ),
-        ),
-        GestureDetector(
-          onTap: onDismiss,
-          child: Text(
-            dismiss,
-            style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.primary,
-                fontWeight: FontWeight.w600),
-          ),
-        ),
-        const SizedBox(width: 4),
-        GestureDetector(
-          onTap: onDismiss,
-          child: const Icon(Icons.close_rounded,
-              size: 16, color: AppColors.primary),
         ),
       ]),
     );
@@ -937,9 +555,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           Text(
             'MediBot',
             style: TextStyle(
-                color: context.text,
-                fontSize: 16,
-                fontWeight: FontWeight.bold),
+                color: context.text, fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const Text(
             'Online',

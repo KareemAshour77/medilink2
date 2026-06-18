@@ -6,13 +6,14 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/reminder_model.dart';
 import '../models/in_app_notification.dart';
+import '../config/app_config.dart';
 
 class ApiService {
-  // Android emulator → use 10.0.2.2
-  // Real phone → use your PC's IP (run ipconfig in CMD)
-  // static const String baseUrl = 'http://192.168.1.16:5000';
-  // static const String baseUrl = 'http://192.168.1.109:5000';
-  static const String baseUrl = 'http://172.20.10.5:5000';
+  // NestJS REST API base URL — resolved at runtime from AppConfig (default port
+  // 5000). Override per-run with --dart-define=NEST_BASE_URL=... or APP_ENV/PC_IP.
+  // This single getter feeds every REST call, image URL, and the chat socket
+  // (ChatService uses ApiService.baseUrl). See lib/core/config/app_config.dart.
+  static String get baseUrl => AppConfig.nestBaseUrl;
 
   static Future<Map<String, dynamic>> updateProfile({
     required String name,

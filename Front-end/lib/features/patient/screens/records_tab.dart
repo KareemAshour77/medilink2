@@ -1,6 +1,7 @@
 // lib/screens/home/records_tab.dart
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/services/records_service.dart';
 import '../../../data/records_data.dart';
 import '../widgets/emergency_card_sheet.dart';
 import 'record_detail_screen.dart';
@@ -20,7 +21,35 @@ class _RecordsTabState extends State<RecordsTab>
   final String _query = '';
   RecordStatus? _statusFilter;
   bool _showTimeline = false;
-  final List<MedicalRecord> _records = List.from(sampleRecords);
+
+  // Real records loaded from the backend.
+  List<MedicalRecord> _records = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final raw = await RecordsService.mine();
+      if (!mounted) return;
+      setState(() {
+        _records = raw.map(MedicalRecord.fromApi).toList();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _loading = false;
+      });
+    }
+  }
 
   // ── Tabs config ───────────────────────────────────────────────────────────
 static List<(RecordType, String, IconData)> tabs(BuildContext context) => [
@@ -61,8 +90,6 @@ void didChangeDependencies() {
     }).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
   }
-
-  void _addRecord(MedicalRecord r) => setState(() => _records.insert(0, r));
 
   @override
   Widget build(BuildContext context) {
@@ -208,32 +235,52 @@ void didChangeDependencies() {
 
           // ── Tab views ─────────────────────────────────────────────────────
           Expanded(
-            child: TabBarView(
-              controller: _tabCtrl,
-              children: tabs(context).map((t) {
-                final list = _filtered(t.$1);
-                return _showTimeline
-                    ? _TimelineView(records: list, txt: txt, card: card, isDark: isDark)
-                    : _RecordsList(
-                        records: list,
-                        txt: txt, card: card, isDark: isDark,
-                        onTap: (r) => Navigator.push(context,
-                          MaterialPageRoute(
-                              builder: (_) => RecordDetailScreen(record: r))),
-                      );
-              }).toList(),
-            ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Text(_error!,
+                              style: const TextStyle(color: AppColors.grey),
+                              textAlign: TextAlign.center),
+                          const SizedBox(height: 12),
+                          TextButton(onPressed: _load, child: Text(context.l.retry)),
+                        ]),
+                      )
+                    : TabBarView(
+                        controller: _tabCtrl,
+                        children: tabs(context).map((t) {
+                          final list = _filtered(t.$1);
+                          return RefreshIndicator(
+                            onRefresh: _load,
+                            child: _showTimeline
+                                ? _TimelineView(records: list, txt: txt, card: card, isDark: isDark)
+                                : _RecordsList(
+                                    records: list,
+                                    txt: txt, card: card, isDark: isDark,
+                                    onTap: (r) async {
+                                      await Navigator.push(context,
+                                          MaterialPageRoute(
+                                              builder: (_) => RecordDetailScreen(record: r)));
+                                      if (mounted) _load();
+                                    },
+                                  ),
+                          );
+                        }).toList(),
+                      ),
           ),
         ]),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.push(context,
-          MaterialPageRoute(
-              builder: (_) => AddRecordScreen(onAdd: _addRecord))),
+        onPressed: () async {
+          final added = await Navigator.push<bool>(context,
+              MaterialPageRoute(builder: (_) => const AddRecordScreen()));
+          if (added == true && mounted) _load();
+        },
         backgroundColor: AppColors.primary,
         icon: const Icon(Icons.add_rounded, color: Colors.white),
-        label: const Text('Add Record',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        label: Text(context.l.addRecord,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
       ),
     );
   }

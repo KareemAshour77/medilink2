@@ -31,9 +31,13 @@ class MessageBubble extends StatefulWidget {
   /// Called when the user taps "retry" on a failed message.
   final VoidCallback? onRetry;
 
+  /// Called once the bot text finishes its typewriter animation.
+  final VoidCallback? onTextComplete;
+
   const MessageBubble({
     required this.message,
     this.onRetry,
+    this.onTextComplete,
     super.key,
   });
 
@@ -42,11 +46,6 @@ class MessageBubble extends StatefulWidget {
 }
 
 class _MessageBubbleState extends State<MessageBubble> {
-  bool _expanded = false;
-
-  /// Characters before the message is truncated with "Show more".
-  static const int _collapseThreshold = 320;
-
   void _copyText(BuildContext context, String text) {
     Clipboard.setData(ClipboardData(text: text));
     AppSnackBar.show(
@@ -60,10 +59,8 @@ class _MessageBubbleState extends State<MessageBubble> {
   @override
   Widget build(BuildContext context) {
     final msg = widget.message;
-    final isLong = (msg.text?.length ?? 0) > _collapseThreshold;
-    final displayText = (isLong && !_expanded)
-        ? '${msg.text!.substring(0, _collapseThreshold)}…'
-        : msg.text;
+    // AI chat shows the full response — no truncation / "See more".
+    final displayText = msg.text;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -90,6 +87,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                   child: _BubbleContainer(
                     message: msg,
                     displayText: displayText,
+                    onTextComplete: widget.onTextComplete,
                   ),
                 ),
               ),
@@ -97,28 +95,6 @@ class _MessageBubbleState extends State<MessageBubble> {
               if (!msg.isBot) const SizedBox(width: 8),
             ],
           ),
-
-          // ── Show more / Show less ──────────────────────
-          if (isLong) ...[
-            const SizedBox(height: 4),
-            Padding(
-              padding: EdgeInsets.only(
-                left:  msg.isBot ? 38 : 0,
-                right: msg.isBot ? 0  : 8,
-              ),
-              child: GestureDetector(
-                onTap: () => setState(() => _expanded = !_expanded),
-                child: Text(
-                  _expanded ? 'Show less' : 'Show more',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-          ],
 
           // ── Status row (user messages only) ───────────
           if (!msg.isBot) ...[
@@ -141,8 +117,13 @@ class _MessageBubbleState extends State<MessageBubble> {
 class _BubbleContainer extends StatelessWidget {
   final ChatMessage message;
   final String? displayText;
+  final VoidCallback? onTextComplete;
 
-  const _BubbleContainer({required this.message, this.displayText});
+  const _BubbleContainer({
+    required this.message,
+    this.displayText,
+    this.onTextComplete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -188,6 +169,7 @@ class _BubbleContainer extends StatelessWidget {
         messageId: msg.id,
         text: text!,
         style: TextStyle(color: context.text, fontSize: 14, height: 1.4),
+        onComplete: onTextComplete,
       );
     }
     return Text(
@@ -292,10 +274,16 @@ class TypewriterText extends StatefulWidget {
   final String text;
   final TextStyle style;
 
+  /// Fired once when the typewriter animation finishes (or immediately for
+  /// short / already-animated text). Used to reveal follow-up cards / report
+  /// images only AFTER the AI text has fully typed.
+  final VoidCallback? onComplete;
+
   const TypewriterText({
     required this.messageId,
     required this.text,
     required this.style,
+    this.onComplete,
     super.key,
   });
 
@@ -309,9 +297,21 @@ class _TypewriterTextState extends State<TypewriterText> {
 
   int _visibleChars = 0;
   Timer? _timer;
+  bool _completedNotified = false;
 
   static const int _charsPerTick = 3;
   static const Duration _tickInterval = Duration(milliseconds: 18);
+
+  /// Notify the parent (once) that typing has finished — scheduled after the
+  /// current frame so it never calls setState during build.
+  void _notifyComplete() {
+    if (_completedNotified) return;
+    _completedNotified = true;
+    if (widget.onComplete == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onComplete!();
+    });
+  }
 
   @override
   void initState() {
@@ -319,6 +319,7 @@ class _TypewriterTextState extends State<TypewriterText> {
     if (_animatedIds.contains(widget.messageId)) {
       // Already animated before — show instantly, no timer.
       _visibleChars = widget.text.length;
+      _notifyComplete();
     } else {
       _startTyping();
     }
@@ -330,6 +331,7 @@ class _TypewriterTextState extends State<TypewriterText> {
     if (old.text != widget.text) {
       _timer?.cancel();
       _visibleChars = 0;
+      _completedNotified = false;
       _animatedIds.remove(widget.messageId);
       _startTyping();
     }
@@ -339,6 +341,7 @@ class _TypewriterTextState extends State<TypewriterText> {
     if (widget.text.length <= 40) {
       if (mounted) setState(() => _visibleChars = widget.text.length);
       _animatedIds.add(widget.messageId);
+      _notifyComplete();
       return;
     }
     _timer = Timer.periodic(_tickInterval, (t) {
@@ -350,6 +353,7 @@ class _TypewriterTextState extends State<TypewriterText> {
       if (_visibleChars >= widget.text.length) {
         t.cancel();
         _animatedIds.add(widget.messageId);
+        _notifyComplete();
       }
     });
   }
